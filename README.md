@@ -91,14 +91,11 @@ IoT Mobile Tracker is a multi-tenant fleet tracking application built on the [Lo
 
 | Path | Contents |
 |------|----------|
-| `experience/` | Experience layout (`Tracker Layout`) and pages (`Log In`, `Fleet Map`). |
-| `files/` | Application files used by the experience, such as the login background. |
-| `design/` | Source design assets. |
+| `losant_app/` | Losant application export: workflows, Data Tables, device recipe and experience (layout, pages, endpoints and workflows). |
 | `tools/` | `simulate-route.js`, a script that simulates a vehicle driving a route. |
-| `.losant/` | Losant CLI metadata that links the local files to the Losant application. |
 | `.env.example` | Template for the credentials used by the route simulator. |
 
-The Losant application export (workflows, Data Tables, device recipe and experience) is committed to the root of the repository through Losant's Git export.
+The `losant_app/` folder is kept in sync with the Losant application through Losant's Git export.
 
 ## Deploying to Losant
 
@@ -241,17 +238,6 @@ Keep in mind:
 The following is only needed to keep working on the experience from this repository; it is not required to deploy the application.
 
 - [Node.js](https://nodejs.org) 20.12 or later.
-- [Losant CLI](https://github.com/Losant/losant-cli): `npm install -g losant-cli`.
-
-Link the repository to a Losant application and sync the experience and files:
-
-```bash
-losant login
-losant configure                # select the application; writes .losant/
-losant experience download      # pull pages, layouts and components
-losant experience upload        # push local changes
-losant files upload             # push application files
-```
 
 **Demo mode.** Append `?demo=1` to the Fleet Map URL to run the whole interface in memory with a simulated fleet, sample geofences and generated events, without any backend.
 
