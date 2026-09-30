@@ -1,0 +1,13 @@
+resourceType: Integration
+resources:
+  - credentialName: Traccar service credentials
+    exportHash: e59a15c11a34fb49b5b8f1509d8a0a6188f08535c1afc2639e7a9699af512656
+    id: ~exportplaceholderid-integration-traccarIntegration~
+    integrationType: websocket
+    name: Traccar integration
+    topics: []
+    websocketConfig:
+      disableSSLVerification: false
+      headers: []
+      url: 'wss://demo.traccar.org/api/socket'
+version: 1

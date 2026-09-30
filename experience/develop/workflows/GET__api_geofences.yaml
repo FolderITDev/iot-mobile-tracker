@@ -1,0 +1,1176 @@
+resourceType: ExperienceFlowVersion
+resources:
+  - description: Created for Endpoint GET /api/geofences
+    enabled: true
+    exportHash: e356c4ec25632fbf42182fceca0fc92f1ca76b7b57804a15e2c28f4deb527a62
+    flowId: ~exportplaceholderid-flow-getApiGeofences~
+    globals: []
+    id: ~exportplaceholderid-flowVersion-getApiGeofences~
+    name: GET /api/geofences
+    nodes:
+      - config:
+          bodyTemplate: '{{jsonEncode working.response}}'
+          bodyTemplateType: string
+          cookieInfo: []
+          headerInfo:
+            - keyTemplate: Content-Type
+              valueTemplate: application/json
+          mqttTopicsTemplate: []
+          replyIdPath: ''
+          replyType: custom
+          responseCodeTemplate: '200'
+          sameSiteTemplate: ''
+        id: _jByUnMFYp
+        meta:
+          category: output
+          description: ''
+          label: 'Endpoint: Reply'
+          mqttTopicsType: []
+          name: endpoint-reply
+          x: 60
+          'y': 500
+        outputIds:
+          - - MSUeK3iizF
+        type: EndpointReplyNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: MSUeK3iizF
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 60
+          'y': 600
+        outputIds: []
+        type: DebugNode
+      - config:
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofences~
+          includeFieldsTemplate: ''
+          limitTemplate: ''
+          offsetTemplate: ''
+          queryTemplate: |-
+            {
+              "$and": [
+                {
+                  "organizationId": {
+                    "$eq": "{{experience.user.experienceGroups.[0].id}}"
+                  }
+                }
+              ]
+            }
+          resultPath: working.geofences
+          sortColumnTemplate: ''
+          sortDirectionTemplate: ''
+        id: h875C_LVW1
+        meta:
+          category: data
+          description: ''
+          label: 'Table: Get Rows'
+          name: get-table-rows
+          x: 60
+          'y': 140
+        outputIds:
+          - - LVPcJdR4vp
+        type: DataTableQueryNode
+      - config:
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofenceDevices~
+          includeFieldsTemplate: ''
+          limitTemplate: ''
+          offsetTemplate: ''
+          queryTemplate: |-
+            {
+              "$and": [
+                {
+                  "organizationId": {
+                    "$eq": "{{experience.user.experienceGroups.[0].id}}"
+                  }
+                }
+              ]
+            }
+          resultPath: working.assignements
+          sortColumnTemplate: ''
+          sortDirectionTemplate: ''
+        id: LVPcJdR4vp
+        meta:
+          category: data
+          description: ''
+          label: 'Table: Get Rows'
+          name: get-table-rows
+          x: 60
+          'y': 260
+        outputIds:
+          - - OwXSfV8_w2
+        type: DataTableQueryNode
+      - config:
+          scopePath: ''
+          script: |
+            /*
+             * Function node "Build geofences response"
+             * Workflow: API Geofences, GET /api/geofences branch
+             *
+             * Input (payload):
+             *   working.geofences     Table: Get Rows on "geofences"        (organizationId = org)
+             *   working.assignments   Table: Get Rows on "geofence_devices" (organizationId = org)
+             *
+             * Output:
+             *   working.response = { geofences: [{ ...row, devices: [{ deviceId, state, stateChangedAt }] }] }
+             *   -> Endpoint Reply with body {{jsonEncode working.response}}
+             */
+
+            function rowsOf(x) {
+              if (!x) return [];
+              if (Array.isArray(x)) return x;
+              return x.items || x.rows || [];
+            }
+
+            var working = payload.working = payload.working || {};
+            var byGeofence = {};
+
+            rowsOf(working.assignments).forEach(function (a) {
+              var key = String(a.geofenceId);
+              (byGeofence[key] = byGeofence[key] || []).push({
+                deviceId: a.deviceId,
+                state: a.state || 'unknown',
+                stateChangedAt: a.stateChangedAt || null
+              });
+            });
+
+            working.response = {
+              geofences: rowsOf(working.geofences).map(function (g) {
+                return {
+                  id: g.id,
+                  name: g.name,
+                  shape: g.shape,
+                  color: g.color,
+                  enabled: g.enabled,
+                  centerLat: g.centerLat,
+                  centerLng: g.centerLng,
+                  radiusM: g.radiusM,
+                  polygon: g.polygon,
+                  updatedAt: g.updatedAt,
+                  devices: byGeofence[String(g.id)] || []
+                };
+              })
+            };
+        id: OwXSfV8_w2
+        meta:
+          category: logic
+          description: ''
+          label: Function
+          name: function
+          x: 60
+          'y': 380
+        outputIds:
+          - - _jByUnMFYp
+        type: RawFunctionNode
+      - config:
+          scopePath: ''
+          script: >
+            /*
+             * Function node "Validate geofence"
+             * Workflow: API Geofences, POST /api/geofences and PATCH /api/geofences/{geofenceId} branches
+             *
+             * Input (payload):
+             *   data.body            JSON sent by the UI:
+             *                        { name, shape, color, enabled, centerLat, centerLng, radiusM, polygon, deviceIds }
+             *   working.orgId        user's organizationId (same one used by /api/fleet)
+             *   working.orgDevices   (optional) Device: Get with the organization's devices;
+             *                        when present, deviceIds outside the org are dropped
+             *
+             * Output:
+             *   working.error        string when the body is invalid (reply 400 with { error })
+             *   working.row          columns ready for Table: Insert Row / Update Row on "geofences"
+             *   working.deviceIds    ids to assign (Insert Row loop on "geofence_devices")
+             */
+
+            var body = (payload.data && payload.data.body) || {};
+
+            var working = payload.working = payload.working || {};
+
+            working.error = null;
+
+
+            function fail(msg) { working.error = msg; }
+
+
+            function num(v) {
+              var n = parseFloat(v);
+              return isFinite(n) ? n : null;
+            }
+
+
+            function validLat(v) { return v !== null && Math.abs(v) <= 90; }
+
+            function validLng(v) { return v !== null && Math.abs(v) <= 180; }
+
+
+            var name = String(body.name || '').trim().slice(0, 60);
+
+            var shape = body.shape === 'polygon' ? 'polygon' : 'circle';
+
+            var color = /^#[0-9a-f]{6}$/i.test(body.color || '') ? body.color :
+            '#2563eb';
+
+            var row = {
+              organizationId: working.orgId,
+              name: name,
+              shape: shape,
+              color: color,
+              enabled: body.enabled !== false && body.enabled !== 'false',
+              centerLat: num(body.centerLat),
+              centerLng: num(body.centerLng),
+              radiusM: 0,
+              polygon: ''
+            };
+
+
+            if (!working.orgId) fail('Usuario sin organización.');
+
+            else if (!name) fail('Falta el nombre.');
+
+            else if (!validLat(row.centerLat) || !validLng(row.centerLng))
+            fail('Centro inválido.');
+
+            else if (shape === 'circle') {
+              row.radiusM = Math.round(num(body.radiusM) || 0);
+              if (row.radiusM < 20 || row.radiusM > 50000) fail('El radio tiene que estar entre 20 m y 50 km.');
+            } else {
+              var pts = body.polygon;
+              if (typeof pts === 'string') {
+                try { pts = JSON.parse(pts); } catch (e) { pts = null; }
+              }
+              if (!Array.isArray(pts) || pts.length < 3 || pts.length > 100) {
+                fail('El polígono necesita entre 3 y 100 vértices.');
+              } else {
+                var clean = pts.map(function (p) {
+                  var lat = num(p && p[0]);
+                  var lng = num(p && p[1]);
+                  return validLat(lat) && validLng(lng) ? [Math.round(lat * 1e6) / 1e6, Math.round(lng * 1e6) / 1e6] : null;
+                });
+                if (clean.some(function (p) { return !p; })) fail('Hay vértices inválidos.');
+                else row.polygon = JSON.stringify(clean);
+              }
+            }
+
+
+            var ids = Array.isArray(body.deviceIds) ? body.deviceIds.map(String)
+            : [];
+
+            var devices = working.orgDevices && (working.orgDevices.items ||
+            working.orgDevices);
+
+            if (Array.isArray(devices)) {
+              var allowed = {};
+              devices.forEach(function (d) { allowed[String(d.id || d.deviceId)] = true; });
+              ids = ids.filter(function (id) { return allowed[id]; });
+            }
+
+            // remove duplicates
+
+            working.deviceIds = ids.filter(function (id, i) { return
+            ids.indexOf(id) === i; });
+
+            working.row = row;
+        id: Uuz2QRvT4L
+        meta:
+          category: logic
+          description: ''
+          label: Function
+          name: function
+          x: 400
+          'y': 380
+        outputIds:
+          - - mK4LnBTfVF
+        type: RawFunctionNode
+      - config:
+          rules:
+            - destination: working.orgId
+              type: set
+              valueTemplate: '{{experience.user.experienceGroups.[0].id}}'
+              valueTemplateType: string
+        id: CrfJs3IZQn
+        meta:
+          category: logic
+          description: ''
+          label: Mutate
+          name: mutate
+          x: 400
+          'y': 140
+        outputIds:
+          - - zPFESryRGW
+        type: MutateNode
+      - config:
+          attributesAsObject: false
+          findMetadata: false
+          findMethod: experienceGroupId
+          findMultiple: true
+          idTemplate: '{{working.orgId}}'
+          includeConnectionStatus: true
+          includeState: false
+          resultPath: working.orgDevices
+          resultsPage: ''
+          resultsPerPage: ''
+          sortDirection: asc
+          sortField: name
+          tagsAsObject: false
+        id: zPFESryRGW
+        meta:
+          category: data
+          description: ''
+          label: 'Device: Get'
+          name: get-device
+          x: 400
+          'y': 260
+        outputIds:
+          - - Uuz2QRvT4L
+        type: GetDeviceNode
+      - config:
+          expression: '!{{working.error}}'
+        id: mK4LnBTfVF
+        meta:
+          category: logic
+          description: ''
+          label: Conditional
+          name: conditional
+          x: 400
+          'y': 500
+        outputIds:
+          - - La2cg6T2Lk
+          - - ezFJTVl89o
+        type: ConditionalNode
+      - config:
+          bodyTemplate: '{"error": "{{working.error}}"}'
+          bodyTemplateType: string
+          cookieInfo: []
+          headerInfo: []
+          mqttTopicsTemplate: []
+          replyIdPath: ''
+          replyType: custom
+          responseCodeTemplate: '400'
+          sameSiteTemplate: ''
+        id: La2cg6T2Lk
+        meta:
+          category: output
+          description: ''
+          label: 'Endpoint: Reply'
+          mqttTopicsType: []
+          name: endpoint-reply
+          x: 300
+          'y': 640
+        outputIds:
+          - - IwVV2vmtBZ
+        type: EndpointReplyNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: IwVV2vmtBZ
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 300
+          'y': 740
+        outputIds: []
+        type: DebugNode
+      - config:
+          dataMethod: payloadPath
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofences~
+          resultPath: working.created
+          rowPayloadPath: working.row
+        id: ezFJTVl89o
+        meta:
+          category: data
+          description: ''
+          label: 'Table: Insert Rows'
+          name: insert-table-row
+          x: 500
+          'y': 640
+        outputIds:
+          - - 6yVnDGrmWG
+        type: DataTableInsertRowNode
+      - config:
+          currentItemPath: working.deviceId
+          loopSourcePath: working.deviceIds
+          mapResultPath: ''
+          parallel: false
+        id: 6yVnDGrmWG
+        meta:
+          category: logic
+          description: ''
+          groupStartX: 260
+          groupStartY: 200
+          label: Loop
+          name: loop
+          x: 500
+          'y': 740
+        outputIds:
+          - - Yohn09h6kp
+          - - OszQrlLztR
+        type: LoopNode
+      - config:
+          loopNodeId: 6yVnDGrmWG
+          mapValuePath: ''
+          shouldBreak: false
+        id: 3XUibQWcMI
+        meta:
+          category: loop
+          description: ''
+          groupId: 6yVnDGrmWG
+          label: Next
+          name: loop-next
+          x: 260
+          'y': 400
+        outputIds: []
+        type: LoopCapNode
+      - config:
+          dataMethod: individualFields
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofenceDevices~
+          resultPath: ''
+          rowFields:
+            - columnTemplate: organizationId
+              valueTemplate: '{{working.orgId}}'
+            - columnTemplate: geofenceId
+              valueTemplate: '{{working.created.id}}'
+            - columnTemplate: deviceId
+              valueTemplate: '{{working.deviceId.value}}'
+            - columnTemplate: state
+              valueTemplate: unknown
+        id: OszQrlLztR
+        meta:
+          category: data
+          description: ''
+          groupId: 6yVnDGrmWG
+          label: 'Table: Insert Rows'
+          name: insert-table-row
+          x: 260
+          'y': 300
+        outputIds:
+          - - 3XUibQWcMI
+        type: DataTableInsertRowNode
+      - config:
+          currentItemPath: working.item
+          loopSourcePath: data.items
+          mapResultPath: ''
+          parallel: false
+        id: FBxxHITYlb
+        meta:
+          category: logic
+          description: ''
+          groupStartX: 260
+          groupStartY: 200
+          label: Loop
+          name: loop
+          x: 2060
+          'y': 140
+        outputIds:
+          - - o8E7stH8j5
+          - - l0uCU5tboy
+        type: LoopNode
+      - config:
+          loopNodeId: FBxxHITYlb
+          mapValuePath: ''
+          shouldBreak: false
+        id: TZUe5XjeGY
+        meta:
+          category: loop
+          description: ''
+          groupId: FBxxHITYlb
+          label: Next
+          name: loop-next
+          x: 260
+          'y': 400
+        outputIds: []
+        type: LoopCapNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: o8E7stH8j5
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 2060
+          'y': 240
+        outputIds: []
+        type: DebugNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: l0uCU5tboy
+        meta:
+          category: debug
+          description: ''
+          groupId: FBxxHITYlb
+          label: Debug
+          name: debug
+          x: 260
+          'y': 280
+        outputIds:
+          - - TZUe5XjeGY
+        type: DebugNode
+      - config:
+          bodyTemplate: '{ "geofence": {{jsonEncode working.created}} }'
+          bodyTemplateType: string
+          cookieInfo: []
+          headerInfo: []
+          mqttTopicsTemplate: []
+          replyIdPath: ''
+          replyType: custom
+          responseCodeTemplate: '201'
+          sameSiteTemplate: ''
+        id: Yohn09h6kp
+        meta:
+          category: output
+          description: ''
+          label: 'Endpoint: Reply'
+          mqttTopicsType: []
+          name: endpoint-reply
+          x: 500
+          'y': 860
+        outputIds:
+          - - RapiVLIVw2
+        type: EndpointReplyNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: RapiVLIVw2
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 500
+          'y': 960
+        outputIds: []
+        type: DebugNode
+      - config:
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofences~
+          includeFieldsTemplate: ''
+          limitTemplate: ''
+          offsetTemplate: ''
+          queryTemplate: |-
+            {
+              "$and": [
+                {
+                  "id": {
+                    "$eq": "{{data.params.geofenceId}}"
+                  }
+                }
+              ]
+            }
+          resultPath: working.geofence
+          sortColumnTemplate: ''
+          sortDirectionTemplate: ''
+        id: rtJoJaXonO
+        meta:
+          category: data
+          description: ''
+          label: 'Table: Get Rows'
+          name: get-table-rows
+          x: 820
+          'y': 220
+        outputIds:
+          - - 4xRYzJdqBn
+        type: DataTableQueryNode
+      - config:
+          expression: '{{working.geofence}}'
+        id: 4xRYzJdqBn
+        meta:
+          category: logic
+          description: ''
+          label: Conditional
+          name: conditional
+          x: 820
+          'y': 320
+        outputIds:
+          - - iojYLENu7J
+          - - DlvcpNmBuk
+        type: ConditionalNode
+      - config:
+          bodyTemplate: ''
+          bodyTemplateType: string
+          cookieInfo: []
+          headerInfo: []
+          mqttTopicsTemplate: []
+          replyIdPath: ''
+          replyType: custom
+          responseCodeTemplate: '404'
+          sameSiteTemplate: ''
+        id: iojYLENu7J
+        meta:
+          category: output
+          description: ''
+          label: 'Endpoint: Reply'
+          mqttTopicsType: []
+          name: endpoint-reply
+          x: 720
+          'y': 440
+        outputIds:
+          - - Hg8I3Igjf4
+        type: EndpointReplyNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: Hg8I3Igjf4
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 720
+          'y': 540
+        outputIds: []
+        type: DebugNode
+      - config:
+          scopePath: ''
+          script: >
+            /*
+             * Function node "Validate geofence"
+             * Workflow: API Geofences, POST /api/geofences and PATCH /api/geofences/{geofenceId} branches
+             *
+             * Input (payload):
+             *   data.body            JSON sent by the UI:
+             *                        { name, shape, color, enabled, centerLat, centerLng, radiusM, polygon, deviceIds }
+             *   working.orgId        user's organizationId (same one used by /api/fleet)
+             *   working.orgDevices   (optional) Device: Get with the organization's devices;
+             *                        when present, deviceIds outside the org are dropped
+             *
+             * Output:
+             *   working.error        string when the body is invalid (reply 400 with { error })
+             *   working.row          columns ready for Table: Insert Row / Update Row on "geofences"
+             *   working.deviceIds    ids to assign (Insert Row loop on "geofence_devices")
+             */
+
+            var body = (payload.data && payload.data.body) || {};
+
+            var working = payload.working = payload.working || {};
+
+            working.error = null;
+
+
+            function fail(msg) { working.error = msg; }
+
+
+            function num(v) {
+              var n = parseFloat(v);
+              return isFinite(n) ? n : null;
+            }
+
+
+            function validLat(v) { return v !== null && Math.abs(v) <= 90; }
+
+            function validLng(v) { return v !== null && Math.abs(v) <= 180; }
+
+
+            var name = String(body.name || '').trim().slice(0, 60);
+
+            var shape = body.shape === 'polygon' ? 'polygon' : 'circle';
+
+            var color = /^#[0-9a-f]{6}$/i.test(body.color || '') ? body.color :
+            '#2563eb';
+
+            var row = {
+              organizationId: working.orgId,
+              name: name,
+              shape: shape,
+              color: color,
+              enabled: body.enabled !== false && body.enabled !== 'false',
+              centerLat: num(body.centerLat),
+              centerLng: num(body.centerLng),
+              radiusM: 0,
+              polygon: ''
+            };
+
+
+            if (!working.orgId) fail('User has no organization.');
+
+            else if (!name) fail('Name is required.');
+
+            else if (!validLat(row.centerLat) || !validLng(row.centerLng))
+            fail('Invalid center.');
+
+            else if (shape === 'circle') {
+              row.radiusM = Math.round(num(body.radiusM) || 0);
+              if (row.radiusM < 20 || row.radiusM > 50000) fail('The radius must be between 20 m and 50 km.');
+            } else {
+              var pts = body.polygon;
+              if (typeof pts === 'string') {
+                try { pts = JSON.parse(pts); } catch (e) { pts = null; }
+              }
+              if (!Array.isArray(pts) || pts.length < 3 || pts.length > 100) {
+                fail('The polygon needs between 3 and 100 vertices.');
+              } else {
+                var clean = pts.map(function (p) {
+                  var lat = num(p && p[0]);
+                  var lng = num(p && p[1]);
+                  return validLat(lat) && validLng(lng) ? [Math.round(lat * 1e6) / 1e6, Math.round(lng * 1e6) / 1e6] : null;
+                });
+                if (clean.some(function (p) { return !p; })) fail('Some vertices are invalid.');
+                else row.polygon = JSON.stringify(clean);
+              }
+            }
+
+
+            var ids = Array.isArray(body.deviceIds) ? body.deviceIds.map(String)
+            : [];
+
+            var devices = working.orgDevices && (working.orgDevices.items ||
+            working.orgDevices);
+
+            if (Array.isArray(devices)) {
+              var allowed = {};
+              devices.forEach(function (d) { allowed[String(d.id || d.deviceId)] = true; });
+              ids = ids.filter(function (id) { return allowed[id]; });
+            }
+
+            // remove duplicates
+
+            working.deviceIds = ids.filter(function (id, i) { return
+            ids.indexOf(id) === i; });
+
+            working.row = row;
+        id: DlvcpNmBuk
+        meta:
+          category: logic
+          description: ''
+          label: Function
+          name: function
+          x: 900
+          'y': 440
+        outputIds:
+          - - Be0aHvj_89
+        type: RawFunctionNode
+      - config:
+          dataMethod: payloadPath
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofences~
+          resultPath: ''
+          rowIdTemplate: '{{data.params.geofenceId}}'
+          rowPayloadPath: working.row
+          rowSelectType: id
+        id: qTqFIlKrYx
+        meta:
+          category: data
+          description: ''
+          label: 'Table: Update Row'
+          name: update-table-row
+          x: 980
+          'y': 760
+        outputIds:
+          - - 9xd4kBnyVQ
+        type: DataTableUpdateRowNode
+      - config:
+          expression: '!{{working.error}}'
+        id: Be0aHvj_89
+        meta:
+          category: logic
+          description: ''
+          label: Conditional
+          name: conditional
+          x: 900
+          'y': 640
+        outputIds:
+          - - 3jpPhOX1Jd
+          - - qTqFIlKrYx
+        type: ConditionalNode
+      - config:
+          bodyTemplate: '{"error": "{{working.error}}"}'
+          bodyTemplateType: string
+          cookieInfo: []
+          headerInfo: []
+          mqttTopicsTemplate: []
+          replyIdPath: ''
+          replyType: custom
+          responseCodeTemplate: '400'
+          sameSiteTemplate: ''
+        id: 3jpPhOX1Jd
+        meta:
+          category: output
+          description: ''
+          label: 'Endpoint: Reply'
+          mqttTopicsType: []
+          name: endpoint-reply
+          x: 800
+          'y': 760
+        outputIds:
+          - - FL0OLW7CJs
+        type: EndpointReplyNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: FL0OLW7CJs
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 800
+          'y': 880
+        outputIds: []
+        type: DebugNode
+      - config:
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofenceDevices~
+          resultPath: ''
+          rowIdTemplate: '{{data.params.geofenceId}}'
+        id: 9xd4kBnyVQ
+        meta:
+          category: data
+          description: ''
+          label: 'Table: Delete Rows'
+          name: delete-table-row
+          x: 980
+          'y': 880
+        outputIds:
+          - - dyGVT7ToAL
+        type: DataTableDeleteRowNode
+      - config:
+          currentItemPath: working.deviceId
+          loopSourcePath: working.deviceIds
+          mapResultPath: ''
+          parallel: false
+        id: dyGVT7ToAL
+        meta:
+          category: logic
+          description: ''
+          groupStartX: 260
+          groupStartY: 200
+          label: Loop
+          name: loop
+          x: 980
+          'y': 980
+        outputIds:
+          - - E6nIVbLUpO
+          - - WLZcnuMIwB
+        type: LoopNode
+      - config:
+          loopNodeId: dyGVT7ToAL
+          mapValuePath: ''
+          shouldBreak: false
+        id: rOLWcPmk9W
+        meta:
+          category: loop
+          description: ''
+          groupId: dyGVT7ToAL
+          label: Next
+          name: loop-next
+          x: 260
+          'y': 400
+        outputIds: []
+        type: LoopCapNode
+      - config:
+          dataMethod: individualFields
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofenceDevices~
+          resultPath: ''
+          rowFields:
+            - columnTemplate: organizationId
+              valueTemplate: '{{working.orgId}}'
+            - columnTemplate: geofenceId
+              valueTemplate: '{{working.created.id}}'
+            - columnTemplate: deviceId
+              valueTemplate: '{{working.deviceId.value}}'
+            - columnTemplate: state
+              valueTemplate: unknown
+        id: WLZcnuMIwB
+        meta:
+          category: data
+          description: ''
+          groupId: dyGVT7ToAL
+          label: 'Table: Insert Rows'
+          name: insert-table-row
+          x: 260
+          'y': 300
+        outputIds:
+          - - rOLWcPmk9W
+        type: DataTableInsertRowNode
+      - config:
+          bodyTemplate: ''
+          bodyTemplateType: string
+          cookieInfo: []
+          headerInfo: []
+          mqttTopicsTemplate: []
+          replyIdPath: ''
+          replyType: custom
+          responseCodeTemplate: '200'
+          sameSiteTemplate: ''
+        id: E6nIVbLUpO
+        meta:
+          category: output
+          description: ''
+          label: 'Endpoint: Reply'
+          mqttTopicsType: []
+          name: endpoint-reply
+          x: 980
+          'y': 1080
+        outputIds:
+          - - sUmGHLNv07
+        type: EndpointReplyNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: sUmGHLNv07
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 980
+          'y': 1180
+        outputIds: []
+        type: DebugNode
+      - config:
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofences~
+          includeFieldsTemplate: ''
+          limitTemplate: ''
+          offsetTemplate: ''
+          queryTemplate: |-
+            {
+              "$and": [
+                {
+                  "organizationId": {
+                    "$eq": "{{experience.user.experienceGroups.[0].id}}"
+                  }
+                },
+                {
+                  "id": {
+                    "$eq": "{{data.params.geofenceId}}"
+                  }
+                }
+              ]
+            }
+          resultPath: working.geofence
+          sortColumnTemplate: ''
+          sortDirectionTemplate: ''
+        id: u2t9rl1xcT
+        meta:
+          category: data
+          description: ''
+          label: 'Table: Get Rows'
+          name: get-table-rows
+          x: 1300
+          'y': 140
+        outputIds:
+          - - og9CfQTnoH
+        type: DataTableQueryNode
+      - config:
+          expression: '{{working.geofence}}'
+        id: og9CfQTnoH
+        meta:
+          category: logic
+          description: ''
+          label: Conditional
+          name: conditional
+          x: 1300
+          'y': 240
+        outputIds:
+          - - LCjKn7g2Hd
+          - - schHDxBhAK
+        type: ConditionalNode
+      - config:
+          bodyTemplate: ''
+          bodyTemplateType: string
+          cookieInfo: []
+          headerInfo: []
+          mqttTopicsTemplate: []
+          replyIdPath: ''
+          replyType: custom
+          responseCodeTemplate: '404'
+          sameSiteTemplate: ''
+        id: LCjKn7g2Hd
+        meta:
+          category: output
+          description: ''
+          label: 'Endpoint: Reply'
+          mqttTopicsType: []
+          name: endpoint-reply
+          x: 1180
+          'y': 360
+        outputIds:
+          - - KF1OZioogc
+        type: EndpointReplyNode
+      - config:
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofences~
+          resultPath: ''
+          rowIdTemplate: '{{data.params.geofenceId}}'
+        id: schHDxBhAK
+        meta:
+          category: data
+          description: ''
+          label: 'Table: Delete Rows'
+          name: delete-table-row
+          x: 1380
+          'y': 360
+        outputIds:
+          - - 3GOIq5EJrP
+        type: DataTableDeleteRowNode
+      - config:
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofenceDevices~
+          limitTemplate: ''
+          queryTemplate: |-
+            {
+              "$and": [
+                {
+                  "geofenceId": {
+                    "$eq": "{{data.params.geofenceId}}"
+                  }
+                }
+              ]
+            }
+          resultPath: ''
+        id: 3GOIq5EJrP
+        meta:
+          category: data
+          description: ''
+          label: 'Table: Delete Rows'
+          name: delete-table-row
+          x: 1380
+          'y': 480
+        outputIds:
+          - - Rzg_2OG_Pi
+        type: DataTableDeleteRowNode
+      - config:
+          bodyTemplate: '{ "ok": true }'
+          bodyTemplateType: string
+          cookieInfo: []
+          headerInfo: []
+          mqttTopicsTemplate: []
+          replyIdPath: ''
+          replyType: custom
+          responseCodeTemplate: '200'
+          sameSiteTemplate: ''
+        id: Rzg_2OG_Pi
+        meta:
+          category: output
+          description: ''
+          label: 'Endpoint: Reply'
+          mqttTopicsType: []
+          name: endpoint-reply
+          x: 1380
+          'y': 580
+        outputIds:
+          - - juwnbn_j57
+        type: EndpointReplyNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: juwnbn_j57
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 1380
+          'y': 680
+        outputIds: []
+        type: DebugNode
+      - config:
+          rules:
+            - destination: working.orgId
+              type: set
+              valueTemplate: '{{experience.user.experienceGroups.[0].id}}'
+              valueTemplateType: string
+        id: 7DGH5EtTDj
+        meta:
+          category: logic
+          description: ''
+          label: Mutate
+          name: mutate
+          x: 820
+          'y': 120
+        outputIds:
+          - - rtJoJaXonO
+        type: MutateNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: KF1OZioogc
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 1180
+          'y': 460
+        outputIds: []
+        type: DebugNode
+    triggers:
+      - config: {}
+        key: ~exportplaceholderid-experienceEndpoint-getApiGeofences~
+        meta:
+          category: trigger
+          description: ''
+          label: GET /api/geofences
+          name: endpoint
+          uiId: B6XhE8PxZS
+          x: 60
+          'y': 20
+        outputIds:
+          - - h875C_LVW1
+        type: endpoint
+      - config: {}
+        key: ~exportplaceholderid-experienceEndpoint-postApiGeofences~
+        meta:
+          category: trigger
+          description: ''
+          label: POST /api/geofences
+          name: endpoint
+          uiId: L6UDJ804SC
+          x: 400
+          'y': 20
+        outputIds:
+          - - CrfJs3IZQn
+        type: endpoint
+      - config: {}
+        key: ~exportplaceholderid-flow-getApiGeofences~-ZkOziSGo6u_MWn_VTDpz_
+        meta:
+          category: trigger
+          description: ''
+          label: Virtual Button
+          name: virtualButton
+          payload: "{\r\n  \"items\": [\r\n    1,\r\n    2,\r\n    3\r\n  ]\r\n}"
+          uiId: LaAcBABCeB
+          x: 2060
+          'y': 40
+        outputIds:
+          - - FBxxHITYlb
+        type: virtualButton
+      - config: {}
+        key: ~exportplaceholderid-experienceEndpoint-patchApiGeofencesGeofenceId~
+        meta:
+          category: trigger
+          description: ''
+          label: 'PATCH /api/geofences/{geofenceId}'
+          name: endpoint
+          uiId: U9hFRI_CG3
+          x: 820
+          'y': 20
+        outputIds:
+          - - 7DGH5EtTDj
+        type: endpoint
+      - config: {}
+        key: ~exportplaceholderid-experienceEndpoint-deleteApiGeofencesGeofenceId~
+        meta:
+          category: trigger
+          description: ''
+          label: 'DELETE /api/geofences/{geofenceId}'
+          name: endpoint
+          uiId: 9tc7IkPFF8
+          x: 1300
+          'y': 20
+        outputIds:
+          - - u2t9rl1xcT
+        type: endpoint
+    version: develop
+version: 1

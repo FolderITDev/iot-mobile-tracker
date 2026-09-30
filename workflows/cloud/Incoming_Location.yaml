@@ -1,0 +1,394 @@
+resourceType: Flow
+resources:
+  - exportHash: ade96cc79a010c48757985d1f336723dd8b2bf3cf296f4a28585ad0507388c6e
+    flowClass: cloud
+    globals: []
+    id: ~exportplaceholderid-flow-incomingLocation~
+    name: Incoming Location
+    nodes:
+      - config:
+          level: verbose
+          message: 'Event Type {{working.eventType.[0]}}'
+          property: ''
+        id: SvunnbBxJO
+        meta:
+          category: debug
+          description: ''
+          label: Event Type
+          name: debug
+          x: 240
+          'y': 760
+        outputIds: []
+        type: DebugNode
+      - config:
+          destination: data.message.data
+          errorBehavior: throw
+          errorPath: ''
+          source: data.message.data
+        id: Y1JI0O56rv
+        meta:
+          category: logic
+          description: ''
+          label: 'JSON: Decode'
+          name: json-decode
+          x: 240
+          'y': 180
+        outputIds:
+          - - 8dxtNiACt4
+        type: JsonDecodeNode
+      - config:
+          operations:
+            - outputPath: working.eventType
+              type: keys
+          sourcePath: data.message.data
+        id: 8dxtNiACt4
+        meta:
+          category: logic
+          description: ''
+          label: Extract event
+          name: object
+          x: 240
+          'y': 260
+        outputIds:
+          - - nO2RHt63tR
+        type: ObjectNode
+      - config:
+          cases:
+            - caseLabel: ''
+              caseTemplate: positions
+            - caseLabel: ''
+              caseTemplate: devices
+          switchTemplate: '{{working.eventType.[0]}}'
+        id: nO2RHt63tR
+        meta:
+          category: logic
+          description: ''
+          label: Switch
+          name: switch
+          x: 240
+          'y': 360
+        outputIds:
+          - - SvunnbBxJO
+          - - GKklg2HiwG
+          - - SvunnbBxJO
+        type: SwitchNode
+      - config:
+          currentItemPath: working.thisPosition
+          loopSourcePath: data.message.data.positions
+          mapResultPath: ''
+          parallel: false
+        id: GKklg2HiwG
+        meta:
+          category: logic
+          description: ''
+          groupStartX: 260
+          groupStartY: 160
+          label: Loop
+          name: loop
+          x: 60
+          'y': 560
+        outputIds:
+          - - SvunnbBxJO
+          - - 8Vb1_847zm
+        type: LoopNode
+      - config:
+          loopNodeId: GKklg2HiwG
+          mapValuePath: ''
+          shouldBreak: false
+        id: SDdyyFRGY7
+        meta:
+          category: loop
+          description: ''
+          groupId: GKklg2HiwG
+          label: Next
+          name: loop-next
+          x: 240
+          'y': 840
+        outputIds: []
+        type: LoopCapNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: vbRTQr5HwX
+        meta:
+          category: debug
+          description: ''
+          groupId: GKklg2HiwG
+          label: Debug
+          name: debug
+          x: 200
+          'y': 700
+        outputIds:
+          - - SDdyyFRGY7
+        type: DebugNode
+      - config:
+          customNodeId: ~exportplaceholderid-flow-resolveLosantDevice~
+          customNodeVersion: default
+          fields:
+            - id: traccarId
+              value: '{{working.thisPosition.value.deviceId}}'
+            - id: name
+              value: ''
+          isInstance: false
+          resultPath: working.losantDevice
+        id: 8Vb1_847zm
+        meta:
+          category: customNodeExecute
+          description: ''
+          groupId: GKklg2HiwG
+          label: Resolve Losant Device
+          name: custom-node-execute-node
+          x: 260
+          'y': 320
+        outputIds:
+          - - fcbahLKckv
+          - - fcbahLKckv
+        type: CustomNodeExecuteNode
+      - config:
+          scopePath: ''
+          script: >-
+            // Branch B: builds the Losant location state from a Traccar
+            position.
+
+            // Input:   payload.working.thisPosition.value  (Traccar position)
+
+            //          payload.working.lastPositionId      (last processed id,
+            may be missing)
+
+            // Output:  payload.working.skip                (true = discard)
+
+            //          payload.working.skipReason
+
+            //          payload.working.state               (attributes for
+            Device State)
+
+            //          payload.working.stateTime           (fixTime in ms, for
+            the Device State Time field)
+
+
+            const KNOTS_TO_KMH = 1.852;
+
+
+            const w = payload.working = payload.working || {};
+
+            const p = w.thisPosition.value;
+
+
+            w.skip = true;
+
+            w.skipReason = null;
+
+            w.state = null;
+
+            w.stateTime = null;
+
+
+            if (!p || typeof p !== 'object') {
+              w.skipReason = 'no position';
+              return;
+            }
+
+
+            // Deduplicate: on reconnect, the socket resends the last position
+            of each device.
+
+            const posId = Number(p.id);
+
+            const lastId = Number(w.lastPositionId);
+
+            if (Number.isFinite(lastId) && posId <= lastId) {
+              w.skipReason = 'position already processed (' + posId + ' <= ' + lastId + ')';
+              return;
+            }
+
+
+            // Discard invalid fixes or out-of-range coordinates.
+
+            const lat = Number(p.latitude);
+
+            const lon = Number(p.longitude);
+
+            if (p.valid === false) {
+              w.skipReason = 'invalid GPS fix';
+              return;
+            }
+
+            if (!Number.isFinite(lat) || !Number.isFinite(lon) ||
+                Math.abs(lat) > 90 || Math.abs(lon) > 180 || (lat === 0 && lon === 0)) {
+              w.skipReason = 'invalid coordinates';
+              return;
+            }
+
+
+            const round = (n, d) => Math.round(n * Math.pow(10, d)) /
+            Math.pow(10, d);
+
+
+            const state = {
+              location: lat + ',' + lon,
+              lastPositionId: posId
+            };
+
+
+            const speed = Number(p.speed);
+
+            if (Number.isFinite(speed)) state.speed = round(speed *
+            KNOTS_TO_KMH, 1);
+
+
+            const course = Number(p.course);
+
+            if (Number.isFinite(course)) state.course = round(course, 0);
+
+
+            const altitude = Number(p.altitude);
+
+            if (Number.isFinite(altitude)) state.altitude = round(altitude, 1);
+
+
+            const attrs = p.attributes || {};
+
+            if (typeof attrs.ignition === 'boolean') state.ignition =
+            attrs.ignition;
+
+
+            // Battery: Traccar may send batteryLevel (%) and/or battery
+            (internal cell voltage).
+
+            // Prefer the device-reported percentage; otherwise estimate it from
+            the voltage.
+
+            const toNum = (v) => (v === null || v === undefined || v === '') ?
+            NaN : Number(v);
+
+
+            // Typical single-cell Li-ion discharge curve (volts -> %),
+            interpolated linearly.
+
+            const LIION_CURVE = [
+              [3.00, 0], [3.30, 5], [3.50, 10], [3.60, 20], [3.70, 40],
+              [3.80, 60], [3.90, 75], [4.00, 85], [4.10, 95], [4.20, 100]
+            ];
+
+            const voltsToPercent = (v) => {
+              if (v <= LIION_CURVE[0][0]) return 0;
+              for (let i = 1; i < LIION_CURVE.length; i++) {
+                const [v1, p1] = LIION_CURVE[i];
+                if (v <= v1) {
+                  const [v0, p0] = LIION_CURVE[i - 1];
+                  return round(p0 + (v - v0) * (p1 - p0) / (v1 - v0), 0);
+                }
+              }
+              return 100;
+            };
+
+
+            let batteryVolts = toNum(attrs.battery);
+
+            if (batteryVolts > 100) batteryVolts = batteryVolts / 1000; // some
+            devices report mV
+
+
+            const batteryLevel = toNum(attrs.batteryLevel);
+
+            if (Number.isFinite(batteryLevel) && batteryLevel >= 0 &&
+            batteryLevel <= 100) {
+              state.batteryLevel = round(batteryLevel, 0);
+            } else if (Number.isFinite(batteryVolts) && batteryVolts > 0) {
+              state.batteryLevel = voltsToPercent(batteryVolts);
+            }
+
+
+            // fixTime comes as UTC ISO-8601; if missing or unparseable, fall
+            back to the current time.
+
+            const fix = Date.parse(p.fixTime || p.deviceTime || p.serverTime);
+
+            w.stateTime = Number.isFinite(fix) ? fix : Date.now();
+
+
+            w.state = state;
+
+            w.skip = false;
+        id: fcbahLKckv
+        meta:
+          category: logic
+          description: ''
+          groupId: GKklg2HiwG
+          label: Function
+          name: function
+          x: 260
+          'y': 420
+        outputIds:
+          - - yWfo5qHO3Z
+        type: RawFunctionNode
+      - config:
+          expression: '{{working.skip}}'
+        id: yWfo5qHO3Z
+        meta:
+          category: logic
+          description: ''
+          groupId: GKklg2HiwG
+          label: skip?
+          name: conditional
+          x: 260
+          'y': 520
+        outputIds:
+          - - Ly8ec1n90o
+          - - qq2zIPVTVX
+        type: ConditionalNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: qq2zIPVTVX
+        meta:
+          category: debug
+          description: ''
+          groupId: GKklg2HiwG
+          label: Position report skipped
+          name: debug
+          x: 380
+          'y': 620
+        outputIds: []
+        type: DebugNode
+      - config:
+          attrDataMethod: payloadPath
+          attrPayloadPath: working.state
+          deviceId: working.losantDevice.id
+          deviceIdTemplateType: jsonPath
+          resultPath: working.result
+          timeSourcePath: working.stateTime
+          timeSourceType: payloadPath
+        id: Ly8ec1n90o
+        meta:
+          category: output
+          description: ''
+          groupId: GKklg2HiwG
+          label: 'Device: State'
+          name: device-state
+          x: 200
+          'y': 620
+        outputIds:
+          - - vbRTQr5HwX
+        type: DeviceChangeStateNode
+    triggers:
+      - config:
+          connect: false
+          disconnect: false
+          failure: false
+          message: true
+        key: ~exportplaceholderid-integration-traccarIntegration~
+        meta:
+          category: trigger
+          description: ''
+          label: WebSocket
+          name: websocket
+          uiId: IfwBNgk1mg
+          x: 240
+          'y': 60
+        outputIds:
+          - - Y1JI0O56rv
+        type: integration
+version: 1

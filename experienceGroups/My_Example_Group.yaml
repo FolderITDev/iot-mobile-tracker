@@ -1,0 +1,13 @@
+resourceType: ExperienceGroupTree
+resources:
+  - description: An example user group
+    deviceIds: []
+    deviceTags:
+      - key: organizationId
+        value: ~exportplaceholderid-experienceGroup-myExampleGroup~
+    exportHash: 9c4840bd772daa73addf062b3358811b6a0a1f22e4967d55b1375c541f765616
+    groupTags: {}
+    id: ~exportplaceholderid-experienceGroup-myExampleGroup~
+    name: My Example Group
+    parentId: null
+version: 1
