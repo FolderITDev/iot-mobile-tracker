@@ -1,0 +1,119 @@
+{{#fillSection "metaDescription"}}Sign in to Fleet Tracker.{{/fillSection}}
+{{!--
+  Log In
+  - Layout: "Tracker Layout" (the topbar is hidden while signed out)
+  - pageData: email (string, optional), loginFailure (boolean)
+  - Background: Application File "login-bg.jpg" (source in design/login-original.png)
+--}}
+<style>
+  /* The background image is dark, so this page always uses a dark palette. */
+  .login {
+    --panel: rgba(12, 8, 22, .72);
+    --panel-2: rgba(255, 255, 255, .06);
+    --border: rgba(255, 255, 255, .12);
+    --text: #f4f1fa;
+    --muted: #b3a8c9;
+    --accent: #9333ea;
+    --accent-soft: rgba(147, 51, 234, .3);
+    --danger: #fca5a5;
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+    overflow-y: auto;
+    color: var(--text);
+    color-scheme: dark;
+    background: #05030a url("https://files.onlosant.com/6aba5ddb95f06d429224e087/login-bg.jpg") center / cover no-repeat;
+  }
+  .login-card {
+    width: 100%;
+    max-width: 360px;
+    padding: 28px 24px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+  }
+  .login-logo {
+    width: 44px;
+    height: 44px;
+    margin: 0 auto 12px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 6px 20px var(--accent-soft);
+  }
+  .login-title {
+    margin: 0 0 22px;
+    text-align: center;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -.01em;
+  }
+  .login-field { display: block; margin-bottom: 14px; }
+  .login-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .login-input {
+    width: 100%;
+    height: 40px;
+    padding: 0 12px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    outline: none;
+  }
+  .login-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .login-error {
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(220, 38, 38, .18);
+    color: var(--danger);
+    font-size: 13px;
+  }
+  .login-submit {
+    width: 100%;
+    height: 40px;
+    margin-top: 6px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .login-submit:hover { filter: brightness(1.08); }
+</style>
+<div class="login">
+  <form class="login-card" method="post">
+    <div class="login-logo" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>
+    </div>
+    <h1 class="login-title">Fleet Tracker</h1>
+    {{#if pageData.loginFailure}}
+      <div class="login-error" role="alert">Incorrect email or password.</div>
+    {{/if}}
+    <label class="login-field">
+      <span class="login-label">Email</span>
+      <input class="login-input" autofocus required type="email" name="email" autocomplete="username" value="{{ pageData.email }}">
+    </label>
+    <label class="login-field">
+      <span class="login-label">Password</span>
+      <input class="login-input" required minlength="8" maxlength="255" type="password" name="password" autocomplete="current-password">
+    </label>
+    <button class="login-submit" type="submit">Sign in</button>
+  </form>
+</div>

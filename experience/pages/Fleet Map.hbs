@@ -1,0 +1,3331 @@
+{{#fillSection "metaDescription"}}Real-time map of the organization's device fleet.{{/fillSection}}
+{{!--
+  Fleet Map
+  - Layout: "Tracker Layout"
+  - pageData esperado (desde el workflow de la página):
+      googleMapsApiKey  (string, requerido)
+      googleMapsMapId   (string, opcional; por defecto DEMO_MAP_ID)
+      organization.name (string, opcional)
+      devices           (array, opcional; primer render sin esperar al polling)
+  - Datos en vivo: GET /api/fleet  y  GET /api/fleet/devices/{deviceId}/history?minutes=N
+  - Geofences:     GET/POST /api/geofences,  PATCH/DELETE /api/geofences/{geofenceId}
+  - Eventos:       GET /api/alarms?limit=N&type=T
+    (contratos y workflows en losant-workflows/README.md)
+  - Modo demo: agregar ?demo=1 a la URL.
+  IMPORTANTE: el JS/CSS de esta página no debe contener llaves dobles (Handlebars).
+--}}
+<style>
+  .fleet {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: 340px minmax(0, 1fr);
+  }
+
+  /* ---------- Sidebar ---------- */
+  .fs {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    z-index: 10;
+  }
+  .fs-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 18px 18px 12px;
+  }
+  .fs-eyebrow {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .fs-org {
+    margin: 2px 0 0;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -.015em;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+  .fs-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    padding: 0 18px 12px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 8px 9px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel-2);
+    cursor: pointer;
+    text-align: left;
+    min-width: 0;
+    transition: border-color .15s, background .15s;
+  }
+  .stat:hover { background: var(--panel-hover); }
+  .stat[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+  .stat-n { font-size: 18px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .stat-l {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--c, var(--offline)); }
+  .stat--moving { --c: var(--moving); }
+  .stat--idle { --c: var(--idle); }
+  .stat--offline { --c: var(--offline); }
+
+  .fs-tools {
+    display: flex;
+    gap: 6px;
+    padding: 0 18px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .search {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 0 10px;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--panel-2);
+    color: var(--muted);
+  }
+  .search:focus-within { border-color: var(--accent); }
+  .search input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text);
+  }
+  .select {
+    height: 36px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--panel-2);
+    cursor: pointer;
+  }
+
+  .fs-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    margin: 0;
+    padding: 6px 8px;
+    list-style: none;
+  }
+  .dv {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    outline: none;
+    --c: var(--offline);
+  }
+  .dv:hover { background: var(--panel-hover); }
+  .dv:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+  .dv.is-selected { background: var(--accent-soft); }
+  .dv--moving { --c: var(--moving); }
+  .dv--idle { --c: var(--idle); }
+  .dv-dot {
+    position: relative;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--c);
+    flex: none;
+  }
+  .dv--moving .dv-dot::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--c);
+    animation: ping 1.8s ease-out infinite;
+  }
+  @keyframes ping {
+    0% { transform: scale(1); opacity: .6; }
+    100% { transform: scale(2.6); opacity: 0; }
+  }
+  .dv-main { flex: 1; min-width: 0; }
+  .dv-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dv-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dv-meta { text-align: right; flex: none; }
+  .dv-speed { font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .dv-time { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .fs-empty { padding: 28px 24px; text-align: center; color: var(--muted); }
+  .fs-empty[hidden] { display: none; }
+
+  .fs-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 18px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .live { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+  .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--offline); flex: none; }
+  .live[data-state="live"] i { background: var(--moving); animation: blink 2s ease-in-out infinite; }
+  .live[data-state="error"] i { background: var(--danger); }
+  .live[data-state="paused"] i { background: var(--idle); }
+  @keyframes blink { 50% { opacity: .35; } }
+
+  .btn-ghost, .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .btn-ghost:hover, .btn:hover { background: var(--panel-hover); }
+  .btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .icon-btn {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    flex: none;
+  }
+  .icon-btn:hover { background: var(--panel-hover); color: var(--text); }
+  .fs-close { display: none; }
+  .fs-backdrop { display: none; }
+
+  /* ---------- Mapa ---------- */
+  .fm { position: relative; min-width: 0; min-height: 0; }
+  .fm-map { position: absolute; inset: 0; background: var(--panel-2); }
+  .fm-msg {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    text-align: center;
+    color: var(--muted);
+    background: var(--panel-2);
+    z-index: 2;
+  }
+  .fm-msg[hidden] { display: none; }
+  .fm-msg strong { display: block; color: var(--text); font-size: 15px; margin-bottom: 4px; }
+  .fm-banner {
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: min(560px, calc(100% - 32px));
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--danger);
+    box-shadow: var(--shadow);
+    font-size: 13px;
+    z-index: 6;
+  }
+  .fm-banner[hidden] { display: none; }
+  .fm-banner a { color: var(--accent); font-weight: 600; }
+  .fm-banner code { font-size: 12px; padding: 1px 4px; border-radius: 4px; background: var(--panel-2); }
+  .fm-controls {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    z-index: 5;
+  }
+  .ctl {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+  }
+  .ctl:hover { background: var(--panel-hover); }
+  .ctl[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+  .fm-fab {
+    display: none;
+    position: absolute;
+    left: 12px;
+    top: 14px;
+    align-items: center;
+    gap: 8px;
+    height: 40px;
+    padding: 0 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+    box-shadow: var(--shadow-sm);
+    font-weight: 600;
+    cursor: pointer;
+    z-index: 5;
+  }
+  .fm-fab span {
+    min-width: 22px;
+    padding: 1px 6px;
+    border-radius: 99px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+  }
+
+  /* ---------- Panel de detalle ---------- */
+  .dp {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    width: 340px;
+    max-height: calc(100% - 28px);
+    overflow-y: auto;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel);
+    box-shadow: var(--shadow);
+    z-index: 5;
+  }
+  .dp[hidden] { display: none; }
+  .dp-head { display: flex; align-items: flex-start; gap: 8px; }
+  .dp-title { flex: 1; min-width: 0; }
+  .dp-title h2 { margin: 6px 0 0; font-size: 17px; letter-spacing: -.01em; overflow-wrap: anywhere; }
+  .dp-title p { margin: 2px 0 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--panel-2);
+    --c: var(--offline);
+  }
+  .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+  .badge--moving { --c: var(--moving); }
+  .badge--idle { --c: var(--idle); }
+  .dp-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin: 14px 0 10px;
+  }
+  .kv { padding: 8px 10px; border-radius: 9px; background: var(--panel-2); min-width: 0; }
+  .kv span { display: block; font-size: 11px; color: var(--muted); }
+  .kv strong { display: block; font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dp-coords {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .dp-coords span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .link-btn { border: 0; background: none; color: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer; padding: 2px 4px; }
+  .dp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+  .dp-range { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--muted); }
+  .dp-range .select { height: 30px; font-size: 12px; }
+  .dp-history { margin: 8px 0 0; font-size: 12px; color: var(--muted); min-height: 1em; }
+  .rp {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 8px;
+    border-radius: 10px;
+    background: var(--panel-2);
+  }
+  .rp[hidden] { display: none; }
+  .rp-play {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+    flex: none;
+  }
+  .rp-main { flex: 1; min-width: 0; }
+  .rp-bar { display: block; width: 100%; margin: 0; accent-color: var(--accent); cursor: pointer; }
+  .rp-info {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .rp .select { height: 28px; padding: 0 4px; font-size: 12px; }
+  .dp-section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .dp-section[hidden] { display: none; }
+  .dp-section h3 { margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { padding: 2px 8px; border-radius: 6px; background: var(--panel-2); font-size: 12px; }
+  .chip b { font-weight: 600; color: var(--muted); }
+  .dp-extras { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
+  .dp-extras dt { color: var(--muted); }
+  .dp-extras dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+  /* ---------- Marcadores (AdvancedMarkerElement) ---------- */
+  .vm {
+    position: relative;
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    transform: translateY(50%);
+    --c: var(--moving);
+  }
+  .vm--idle { --c: var(--idle); }
+  .vm--offline { --c: var(--offline); opacity: .85; }
+  .vm-body {
+    position: relative;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--c);
+    border: 2.5px solid #fff;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .35);
+    display: grid;
+    place-items: center;
+    transition: transform .2s, box-shadow .2s;
+  }
+  .vm-body::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #fff; }
+  .vm-arrow {
+    display: none;
+    width: 14px;
+    height: 14px;
+    fill: #fff;
+    transform: rotate(var(--rot, 0deg));
+    transition: transform .8s ease;
+  }
+  .vm--moving.has-heading .vm-arrow { display: block; }
+  .vm--moving.has-heading .vm-body::after { display: none; }
+  .vm--replay { --c: var(--accent); }
+  .vm--replay .vm-arrow { display: block; }
+  .vm--replay .vm-body::after { display: none; }
+  .vm-pulse { position: absolute; inset: 2px; border-radius: 50%; background: var(--c); opacity: 0; }
+  .vm--moving .vm-pulse { animation: vm-pulse 2s ease-out infinite; }
+  @keyframes vm-pulse {
+    0% { transform: scale(1); opacity: .45; }
+    100% { transform: scale(2.3); opacity: 0; }
+  }
+  .vm-label {
+    position: absolute;
+    top: calc(100% + 3px);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s;
+  }
+  .show-labels .vm-label, .vm:hover .vm-label, .vm.is-selected .vm-label { opacity: 1; }
+  .vm.is-selected .vm-body {
+    transform: scale(1.2);
+    box-shadow: 0 0 0 4px var(--accent-soft), 0 0 0 2px var(--accent), 0 3px 10px rgba(0, 0, 0, .4);
+  }
+  .vh-start {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    border: 3px solid var(--accent);
+    transform: translateY(50%);
+  }
+
+  /* ---------- Pestañas del sidebar ---------- */
+  .fs-tabs {
+    display: flex;
+    gap: 3px;
+    margin: 0 18px 12px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel-2);
+  }
+  .fs-tab, .seg button {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 30px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .fs-tab:hover, .seg button:hover { color: var(--text); }
+  .fs-tab[aria-selected="true"], .seg button[aria-pressed="true"] { background: var(--panel); color: var(--text); box-shadow: var(--shadow-sm); }
+  .fs-tab-n {
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 99px;
+    background: var(--danger);
+    color: #fff;
+    font-size: 10px;
+    line-height: 16px;
+    font-variant-numeric: tabular-nums;
+  }
+  .fs-tab-n[hidden] { display: none; }
+  .fs-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .fs-view[hidden] { display: none; }
+  .fs-tools .btn { height: 36px; }
+  .fs-tools .select { flex: 1; min-width: 0; }
+  .btn.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.btn-primary:hover { background: var(--accent); filter: brightness(1.08); }
+  .btn.btn-danger { color: var(--danger); }
+  .btn:disabled { opacity: .5; cursor: default; }
+
+  /* ---------- Listas de geofences y eventos ---------- */
+  .gf, .ev {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    outline: none;
+  }
+  .gf:hover, .ev:hover { background: var(--panel-hover); }
+  .gf:focus-visible, .ev:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+  .gf.is-selected { background: var(--accent-soft); }
+  .gf-sw { width: 14px; height: 14px; border-radius: 4px; background: var(--c); flex: none; }
+  .gf--circle .gf-sw { border-radius: 50%; }
+  .gf--off { opacity: .55; }
+  .gf-in { font-size: 11px; font-weight: 600; color: var(--moving); white-space: nowrap; }
+  .ev { align-items: flex-start; }
+  .ev-ic {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: var(--panel-2);
+    color: var(--c, var(--danger));
+    flex: none;
+  }
+  .ev--enter { --c: var(--moving); }
+  .ev--exit { --c: var(--idle); }
+  .ev-main { flex: 1; min-width: 0; }
+  .ev-msg { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+  .ev-sub { font-size: 11px; color: var(--muted); }
+
+  /* ---------- Geofences en el mapa ---------- */
+  .gf-label {
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: var(--panel);
+    border-left: 3px solid var(--c);
+    box-shadow: var(--shadow-sm);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(50%);
+    transition: opacity .15s;
+  }
+  .show-gf-labels .gf-label { opacity: .92; }
+  .gp-vx {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid var(--text);
+    transform: translateY(50%);
+  }
+  .gp-vx--first { width: 16px; height: 16px; border-width: 3px; cursor: pointer; }
+  .ev-pin {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--c, var(--danger));
+    border: 3px solid #fff;
+    box-shadow: 0 0 0 4px var(--accent-soft), 0 2px 6px rgba(0, 0, 0, .35);
+    transform: translateY(50%);
+  }
+  .chip-gf { display: inline-flex; align-items: center; gap: 6px; border: 0; cursor: pointer; color: var(--text); }
+  .chip-gf:hover { background: var(--panel-hover); }
+  .chip-gf i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+
+  /* ---------- Editor de geofences ---------- */
+  .gp [hidden] { display: none !important; }
+  .fld { display: block; margin-top: 12px; }
+  .fld > span { display: block; margin-bottom: 5px; font-size: 11px; font-weight: 600; color: var(--muted); }
+  .fld em { font-style: normal; font-weight: 500; }
+  .input {
+    width: 100%;
+    height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--panel-2);
+    outline: 0;
+  }
+  .input:focus { border-color: var(--accent); }
+  .seg { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); }
+  .gp-hint { margin: 12px 0 0; padding: 9px 11px; border-radius: 9px; background: var(--accent-soft); font-size: 12px; }
+  .gp-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .swatches { display: flex; gap: 8px; }
+  .swatch {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 2px solid var(--panel);
+    border-radius: 50%;
+    background: var(--c);
+    box-shadow: 0 0 0 1px var(--border);
+    cursor: pointer;
+  }
+  .swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--text); }
+  .gp-check { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; cursor: pointer; }
+  .gp-check input, .gp-dev input { accent-color: var(--accent); }
+  .gp-devtools { display: flex; align-items: center; gap: 4px; }
+  .gp-devs { max-height: 210px; overflow-y: auto; margin-top: 6px; border: 1px solid var(--border); border-radius: 10px; }
+  .gp-dev { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 13px; cursor: pointer; }
+  .gp-dev + .gp-dev { border-top: 1px solid var(--border); }
+  .gp-dev:hover { background: var(--panel-hover); }
+  .gp-dev-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gp-state { font-size: 11px; font-weight: 600; color: var(--muted); }
+  .gp-state--inside { color: var(--moving); }
+  .gp-devs-empty { margin: 0; padding: 12px; font-size: 12px; color: var(--muted); text-align: center; }
+  .gp-err { margin: 10px 0 0; font-size: 12px; color: var(--danger); }
+  .gp-foot { display: flex; align-items: center; gap: 6px; margin-top: 16px; }
+  .gp-spacer { flex: 1; }
+
+  /* ---------- Mobile ---------- */
+  @media (max-width: 900px) {
+    .fleet { grid-template-columns: minmax(0, 1fr); }
+    .fs {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: min(360px, 88vw);
+      transform: translateX(-100%);
+      transition: transform .25s ease;
+      box-shadow: var(--shadow);
+      z-index: 20;
+    }
+    .fleet.sidebar-open .fs { transform: none; }
+    .fleet.sidebar-open .fs-backdrop {
+      display: block;
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, .35);
+      z-index: 15;
+    }
+    .fs-close { display: grid; }
+    .fm-fab { display: inline-flex; }
+    .fm-banner { top: 64px; }
+    .dp {
+      top: auto;
+      left: 10px;
+      right: 10px;
+      bottom: 10px;
+      width: auto;
+      max-height: 55%;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .vm-pulse, .dv--moving .dv-dot::after, .live i { animation: none !important; }
+  }
+</style>
+
+<div class="fleet" id="fleetApp"
+  data-api-key="{{pageData.googleMapsApiKey}}"
+  data-map-id="{{pageData.googleMapsMapId}}"
+  data-org="{{#if pageData.organization.name}}{{pageData.organization.name}}{{else}}{{experience.user.experienceGroups.[0].name}}{{/if}}">
+
+  <aside class="fs" id="sidebar" aria-label="Device fleet">
+    <div class="fs-head">
+      <div>
+        <span class="fs-eyebrow">Fleet</span>
+        <h1 class="fs-org" id="orgName">My organization</h1>
+      </div>
+      <button class="icon-btn fs-close" id="sidebarClose" type="button" aria-label="Close list">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <div class="fs-tabs" role="tablist" aria-label="Sections">
+      <button class="fs-tab" type="button" role="tab" data-tab="fleet" aria-selected="true">Fleet</button>
+      <button class="fs-tab" type="button" role="tab" data-tab="geofences" aria-selected="false">Geofences</button>
+      <button class="fs-tab" type="button" role="tab" data-tab="events" aria-selected="false">Events <span class="fs-tab-n" id="evBadge" hidden>0</span></button>
+    </div>
+
+    <div class="fs-view" data-view="fleet">
+    <div class="fs-stats" role="group" aria-label="Filter by status">
+      <button class="stat" type="button" data-filter="all" aria-pressed="true">
+        <span class="stat-n" data-count="all">0</span><span class="stat-l">Total</span>
+      </button>
+      <button class="stat stat--moving" type="button" data-filter="moving" aria-pressed="false">
+        <span class="stat-n" data-count="moving">0</span><span class="stat-l"><i class="dot"></i>Moving</span>
+      </button>
+      <button class="stat stat--idle" type="button" data-filter="idle" aria-pressed="false">
+        <span class="stat-n" data-count="idle">0</span><span class="stat-l"><i class="dot"></i>Stopped</span>
+      </button>
+      <button class="stat stat--offline" type="button" data-filter="offline" aria-pressed="false">
+        <span class="stat-n" data-count="offline">0</span><span class="stat-l"><i class="dot"></i>Offline</span>
+      </button>
+    </div>
+
+    <div class="fs-tools">
+      <label class="search">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="search" type="search" placeholder="Search name, ID or tag" autocomplete="off" aria-label="Search device">
+      </label>
+      <select class="select" id="sort" aria-label="Sort">
+        <option value="name">Name</option>
+        <option value="status">Status</option>
+        <option value="recent">Recent</option>
+      </select>
+    </div>
+
+    <ul class="fs-list" id="deviceList" role="listbox" aria-label="Devices"></ul>
+    <div class="fs-empty" id="listEmpty">Loading fleet…</div>
+    </div>
+
+    <div class="fs-view" data-view="geofences" hidden>
+      <div class="fs-tools">
+        <label class="search">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input id="gfSearch" type="search" placeholder="Search geofence" autocomplete="off" aria-label="Search geofence">
+        </label>
+        <button class="btn btn-primary" id="gfNew" type="button">+ New</button>
+      </div>
+      <ul class="fs-list" id="gfList" aria-label="Geofences"></ul>
+      <div class="fs-empty" id="gfEmpty">Loading geofences…</div>
+    </div>
+
+    <div class="fs-view" data-view="events" hidden>
+      <div class="fs-tools">
+        <select class="select" id="evFilter" aria-label="Event type">
+          <option value="all">All events</option>
+          <option value="geofence.enter">Geofence entries</option>
+          <option value="geofence.exit">Geofence exits</option>
+        </select>
+        <button class="btn" id="evRefresh" type="button">Refresh</button>
+      </div>
+      <ul class="fs-list" id="evList" aria-label="Events"></ul>
+      <div class="fs-empty" id="evEmpty">Loading events…</div>
+    </div>
+
+    <footer class="fs-foot">
+      <span class="live" id="live" data-state="connecting"><i></i><span id="liveText">Connecting…</span></span>
+      <button class="btn-ghost" id="pauseBtn" type="button" aria-pressed="false">Pause</button>
+    </footer>
+  </aside>
+  <div class="fs-backdrop" id="backdrop"></div>
+
+  <section class="fm" aria-label="Map">
+    <div class="fm-map" id="map"></div>
+    <div class="fm-msg" id="mapMsg" hidden></div>
+    <div class="fm-banner" id="banner" role="status" hidden></div>
+
+    <button class="fm-fab" id="sidebarOpen" type="button">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      Fleet <span id="fabCount">0</span>
+    </button>
+
+    <div class="fm-controls">
+      <button class="ctl" id="fitBtn" type="button" title="Show whole fleet" aria-label="Show whole fleet">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+      </button>
+      <button class="ctl" id="trailsBtn" type="button" title="Movement trails" aria-label="Movement trails" aria-pressed="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c3-1 4-5 7-5s3 4 6 4 4-3 5-5"/><circle cx="21" cy="11" r="1.5" fill="currentColor"/></svg>
+      </button>
+      <button class="ctl" id="gfBtn" type="button" title="Geofences" aria-label="Show geofences" aria-pressed="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" stroke-dasharray="3 2.5"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/></svg>
+      </button>
+      <button class="ctl" id="typeBtn" type="button" title="Satellite view" aria-label="Satellite view" aria-pressed="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>
+      </button>
+    </div>
+
+    <article class="dp" id="detail" aria-live="polite" hidden></article>
+    <article class="dp gp" id="gfPanel" aria-label="Geofence editor" hidden></article>
+  </section>
+</div>
+
+<script type="application/json" id="fleetBoot">{{#if pageData.devices}}{{{jsonEncode pageData.devices}}}{{/if}}</script>
+
+<script>
+(function () {
+  'use strict';
+
+  var root = document.getElementById('fleetApp');
+  var params = new URLSearchParams(location.search);
+
+  // ---------------------------------------------------------------------------
+  // Configuración
+  // ---------------------------------------------------------------------------
+  var CONFIG = {
+    endpoints: {
+      fleet: '/api/fleet',
+      history: '/api/fleet/devices/:deviceId/history',
+      geofences: '/api/geofences',
+      geofence: '/api/geofences/:geofenceId',
+      alarms: '/api/alarms'
+    },
+    geofencePollMs: 30000,
+    alarmsPollMs: 15000,
+    alarmsLimit: 100,
+    gfLabelsZoom: 13,
+    attributes: {
+      location: 'location',
+      speed: 'speed',
+      heading: 'course',
+      battery: 'batteryLevel'
+    },
+    pollMs: 5000,
+    hiddenPollMs: 20000,
+    staleMs: 10 * 60 * 1000,
+    movingSpeedKmh: 3,
+    movingDistanceM: 15,
+    movingHoldMs: 30000,
+    tailPoints: 12,
+    teleportM: 5000,
+    labelsZoom: 15,
+    defaultCenter: { lat: -34.6037, lng: -58.4416 },
+    defaultZoom: 11,
+    googleMapsApiKey: root.dataset.apiKey || '',
+    googleMapsMapId: root.dataset.mapId || 'DEMO_MAP_ID',
+    demo: params.get('demo') === '1'
+  };
+
+  var STATUS = {
+    moving: { label: 'Moving', order: 0 },
+    idle: { label: 'Stopped', order: 1 },
+    offline: { label: 'Offline', order: 2 }
+  };
+
+  var state = {
+    filter: 'all',
+    search: '',
+    sort: 'name',
+    selectedId: null,
+    follow: false,
+    trails: true,
+    paused: false,
+    loaded: false,
+    fitted: false,
+    lastSync: 0,
+    errors: 0,
+    live: 'connecting',
+    lastOrder: '',
+    historyReq: 0,
+    historyMinutes: 60,
+    tab: 'fleet',
+    gfLayer: true,
+    gfSearch: '',
+    evFilter: 'all',
+    evSeen: 0
+  };
+
+  var fleet = new Map();
+  var gmap = null;
+  var mapsReady = false;
+  var historyLine = null;
+  var historyStart = null;
+  var pollTimer = null;
+  var colors = {};
+
+  // ---------------------------------------------------------------------------
+  // Utilidades
+  // ---------------------------------------------------------------------------
+  function $(id) { return document.getElementById(id); }
+
+  var ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ESC[c]; });
+  }
+
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+  function toRad(d) { return d * Math.PI / 180; }
+
+  function haversine(a, b) {
+    var R = 6371000;
+    var dLat = toRad(b.lat - a.lat);
+    var dLng = toRad(b.lng - a.lng);
+    var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+
+  function bearing(a, b) {
+    var y = Math.sin(toRad(b.lng - a.lng)) * Math.cos(toRad(b.lat));
+    var x = Math.cos(toRad(a.lat)) * Math.sin(toRad(b.lat)) -
+      Math.sin(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.cos(toRad(b.lng - a.lng));
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+  }
+
+  function cardinal(deg) {
+    return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(((deg % 360) + 360) % 360 / 45) % 8];
+  }
+
+  function rel(ts) {
+    if (!ts) return '—';
+    var s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (s < 5) return 'just now';
+    if (s < 60) return s + ' s ago';
+    var m = Math.round(s / 60);
+    if (m < 60) return m + ' min ago';
+    var h = Math.round(m / 60);
+    if (h < 24) return h + ' h ago';
+    return Math.round(h / 24) + ' d ago';
+  }
+
+  function toTime(v) {
+    if (v == null || v === '') return null;
+    // Data Tables guardan fechas como epoch ms (número o string numérico)
+    var t = typeof v === 'number' || /^\d+$/.test(v) ? Number(v) : new Date(v).getTime();
+    return isFinite(t) ? t : null;
+  }
+
+  function fmtValue(v) {
+    if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(2);
+    if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+    if (v && typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  }
+
+  function isMobile() { return window.matchMedia('(max-width: 900px)').matches; }
+
+  function round6(v) { return Math.round(v * 1e6) / 1e6; }
+
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+
+  function fmtDistance(m) { return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km'; }
+
+  function fmtDateTime(ts) {
+    if (!ts) return '';
+    return new Date(ts).toLocaleString('en-US', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function byName(a, b) {
+    return a.name.localeCompare(b.name, 'es', { numeric: true, sensitivity: 'base' });
+  }
+
+  function readColors() {
+    var cs = getComputedStyle(document.documentElement);
+    ['moving', 'idle', 'offline', 'accent'].forEach(function (k) {
+      colors[k] = cs.getPropertyValue('--' + k).trim();
+    });
+  }
+
+  function getJSON(url) {
+    return fetch(url, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' }
+    }).then(function (r) {
+      if (!r.ok) {
+        var err = new Error('HTTP ' + r.status);
+        err.status = r.status;
+        throw err;
+      }
+      return r.json();
+    });
+  }
+
+  // los workflows responden con la salida de los nodos en payload.result
+  function unwrap(payload) {
+    return payload && !Array.isArray(payload) && payload.result && typeof payload.result === 'object' ? payload.result : payload;
+  }
+
+  function sendJSON(method, url, body) {
+    return fetch(url, {
+      method: method,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: body == null ? undefined : JSON.stringify(body)
+    }).then(function (r) {
+      return r.text().then(function (text) {
+        var json = null;
+        try { json = text ? JSON.parse(text) : null; } catch (e) { json = null; }
+        if (!r.ok) {
+          var src = unwrap(json);
+          var err = new Error(src && src.error ? String(src.error) : 'HTTP ' + r.status);
+          err.status = r.status;
+          throw err;
+        }
+        return json;
+      });
+    });
+  }
+
+  function api(method, url, body) {
+    if (CONFIG.demo) return DemoGeo.handle(method, url, body);
+    return method === 'GET' ? getJSON(url) : sendJSON(method, url, body);
+  }
+
+  function apiErrorText(err, fallback) {
+    if (err && err.status === 404 && /^HTTP/.test(err.message)) return 'The endpoint does not exist yet (HTTP 404).';
+    if (err && err.message && !/^HTTP/.test(err.message)) return err.message;
+    return fallback + (err && err.status ? ' (HTTP ' + err.status + ')' : '');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Normalización de datos (acepta formato propio o device nativo de Losant)
+  // ---------------------------------------------------------------------------
+  function parseLocation(v) {
+    if (v == null) return null;
+    if (typeof v === 'string') {
+      var p = v.split(',');
+      return p.length < 2 ? null : toLatLng(parseFloat(p[0]), parseFloat(p[1]));
+    }
+    if (Array.isArray(v)) return toLatLng(+v[0], +v[1]);
+    if (typeof v === 'object') {
+      if ('value' in v) return parseLocation(v.value);
+      return toLatLng(+(v.lat != null ? v.lat : v.latitude), +(v.lng != null ? v.lng : (v.lon != null ? v.lon : v.longitude)));
+    }
+    return null;
+  }
+
+  function toLatLng(lat, lng) {
+    if (!isFinite(lat) || !isFinite(lng)) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180 || (lat === 0 && lng === 0)) return null;
+    return { lat: lat, lng: lng };
+  }
+
+  function attrSource(raw) {
+    if (raw.compositeState) {
+      var out = {};
+      Object.keys(raw.compositeState).forEach(function (k) {
+        var s = raw.compositeState[k];
+        out[k] = s && typeof s === 'object' && 'value' in s ? { value: s.value, time: toTime(s.time) } : { value: s, time: null };
+      });
+      return out;
+    }
+    var src = raw.attributes || raw.data || {};
+    var res = {};
+    Object.keys(src).forEach(function (k) { res[k] = { value: src[k], time: null }; });
+    return res;
+  }
+
+  function normalizeTags(tags) {
+    if (!tags) return [];
+    if (Array.isArray(tags)) {
+      return tags.filter(Boolean).map(function (t) { return { key: t.key, value: t.value }; });
+    }
+    return Object.keys(tags).map(function (k) { return { key: k, value: tags[k] }; });
+  }
+
+  function normalize(raw) {
+    if (!raw) return null;
+    var id = raw.id || raw.deviceId || raw._id;
+    if (!id) return null;
+    var A = CONFIG.attributes;
+    var attrs = attrSource(raw);
+    var known = {};
+    Object.keys(A).forEach(function (k) { known[A[k]] = true; });
+
+    function num(name) {
+      var a = attrs[name];
+      var x = a ? parseFloat(a.value) : NaN;
+      return isFinite(x) ? x : null;
+    }
+
+    var locAttr = attrs[A.location] || (raw.location != null ? { value: raw.location, time: null } : null);
+    var times = [raw.lastUpdated, raw.lastSeen, raw.time, locAttr && locAttr.time].map(toTime).filter(Boolean);
+
+    var connected = raw.connected;
+    if (connected == null && raw.connectionInfo) connected = raw.connectionInfo.connected;
+    connected = connected == null ? null : !!connected;
+
+    var extras = [];
+    Object.keys(attrs).forEach(function (k) {
+      if (!known[k] && attrs[k].value != null && attrs[k].value !== '') extras.push({ key: k, value: attrs[k].value });
+    });
+
+    var d = {
+      id: String(id),
+      name: raw.name || raw.deviceName || String(id),
+      description: raw.description || '',
+      loc: locAttr ? parseLocation(locAttr.value) : null,
+      speed: num(A.speed),
+      heading: num(A.heading),
+      battery: num(A.battery),
+      lastSeen: times.length ? Math.max.apply(null, times) : null,
+      connected: connected,
+      tags: normalizeTags(raw.tags),
+      extras: extras
+    };
+    d.hay = [d.name, d.id, d.description].concat(d.tags.map(function (t) { return t.key + ':' + t.value; })).join(' ').toLowerCase();
+    return d;
+  }
+
+  function extractList(payload) {
+    if (Array.isArray(payload)) return payload;
+    if (!payload) return [];
+    return payload.devices || payload.items || payload.result || [];
+  }
+
+  function extractPoints(payload, id) {
+    var pts = [];
+    payload = unwrap(payload);
+    if (Array.isArray(payload)) pts = payload;
+    else if (payload && Array.isArray(payload.points)) pts = payload.points;
+    else if (payload && payload.devices && payload.devices[id]) pts = payload.devices[id].points || [];
+    var locKey = CONFIG.attributes.location;
+    var speedKey = CONFIG.attributes.speed;
+    return pts.map(function (p) {
+      var src = p.data && p.data[locKey] != null ? p.data[locKey] :
+        (p[locKey] != null ? p[locKey] : (p.value != null ? p.value : p));
+      var ll = parseLocation(src);
+      if (!ll) return null;
+      var sp = parseFloat(p.data && p.data[speedKey] != null ? p.data[speedKey] : p[speedKey]);
+      return { lat: ll.lat, lng: ll.lng, time: toTime(p.time) || 0, speed: isFinite(sp) ? sp : null };
+    }).filter(Boolean).sort(function (a, b) { return a.time - b.time; });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Estado de la flota
+  // ---------------------------------------------------------------------------
+  function computeStatus(e) {
+    var d = e.d;
+    var now = Date.now();
+    if (!d.lastSeen || now - d.lastSeen > CONFIG.staleMs || d.connected === false) return 'offline';
+    if (d.speed != null) return d.speed >= CONFIG.movingSpeedKmh ? 'moving' : 'idle';
+    return now - e.lastMoveAt < CONFIG.movingHoldMs ? 'moving' : 'idle';
+  }
+
+  function headingOf(e) {
+    if (e.d.heading != null) return e.d.heading;
+    return e.bearing;
+  }
+
+  function upsert(d, now) {
+    var e = fleet.get(d.id);
+    if (!e) {
+      e = { d: d, pos: d.loc, tail: d.loc ? [d.loc] : [], bearing: null, rot: null, lastMoveAt: 0, anim: null, lastApply: now };
+      fleet.set(d.id, e);
+    } else {
+      var prev = e.d.loc;
+      if (d.loc && !prev) {
+        e.pos = d.loc;
+        e.tail = [d.loc];
+      } else if (d.loc && prev) {
+        var dist = haversine(prev, d.loc);
+        if (dist > 1) {
+          if (dist > CONFIG.movingDistanceM) {
+            e.lastMoveAt = Date.now();
+            e.bearing = bearing(prev, d.loc);
+          }
+          e.tail.push(d.loc);
+          if (e.tail.length > CONFIG.tailPoints) e.tail.shift();
+          if (historyLine && state.selectedId === d.id) historyLine.getPath().push(new google.maps.LatLng(d.loc.lat, d.loc.lng));
+          if (dist > CONFIG.teleportM || document.hidden || !e.pos) {
+            e.pos = d.loc;
+            e.anim = null;
+          } else {
+            e.anim = { from: e.pos, to: d.loc, start: now, dur: clamp(now - e.lastApply, 800, 20000) * 0.95 };
+          }
+        }
+      } else if (!d.loc) {
+        e.pos = null;
+        e.anim = null;
+      }
+      e.lastApply = now;
+      e.d = d;
+    }
+    e.status = computeStatus(e);
+    return e;
+  }
+
+  function removeEntry(id) {
+    var e = fleet.get(id);
+    if (!e) return;
+    if (e.marker) e.marker.map = null;
+    if (e.tailLine) e.tailLine.setMap(null);
+    fleet.delete(id);
+    if (state.selectedId === id) deselect();
+  }
+
+  function matchesFilter(e) {
+    if (state.filter !== 'all' && e.status !== state.filter) return false;
+    return !state.search || e.d.hay.indexOf(state.search) !== -1;
+  }
+
+  function applyFleet(payload) {
+    var org = payload && !Array.isArray(payload) && payload.organization;
+    if (org && org.name) setOrg(org.name);
+    var now = performance.now();
+    var seen = new Set();
+    extractList(payload).forEach(function (raw) {
+      var d = normalize(raw);
+      if (!d) return;
+      seen.add(d.id);
+      upsert(d, now);
+    });
+    Array.from(fleet.keys()).forEach(function (id) { if (!seen.has(id)) removeEntry(id); });
+    state.loaded = true;
+    renderAll();
+    if (!state.fitted && mapsReady) fitAll();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Google Maps
+  // ---------------------------------------------------------------------------
+  function loadGoogleMaps() {
+    return new Promise(function (resolve, reject) {
+      if (!CONFIG.googleMapsApiKey) {
+        reject(new Error('missing-key'));
+        return;
+      }
+      window.__fleetMapsReady = function () { resolve(); };
+      window.gm_authFailure = function () {
+        showMapMsg('Google Maps rejected the API key', 'Check that the key is valid, has the Maps JavaScript API enabled and that this domain is authorized.');
+      };
+      var s = document.createElement('script');
+      s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(CONFIG.googleMapsApiKey) +
+        '&v=weekly&loading=async&libraries=marker&language=en&callback=__fleetMapsReady';
+      s.async = true;
+      s.onerror = function () { reject(new Error('load-failed')); };
+      document.head.appendChild(s);
+    }).then(function () {
+      return Promise.all([google.maps.importLibrary('maps'), google.maps.importLibrary('marker')]);
+    });
+  }
+
+  function initMap() {
+    gmap = new google.maps.Map($('map'), {
+      center: CONFIG.defaultCenter,
+      zoom: CONFIG.defaultZoom,
+      mapId: CONFIG.googleMapsMapId,
+      colorScheme: 'FOLLOW_SYSTEM',
+      disableDefaultUI: true,
+      zoomControl: true,
+      zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM },
+      clickableIcons: false,
+      gestureHandling: 'greedy'
+    });
+    gmap.addListener('dragstart', function () { if (state.follow) setFollow(false); });
+    gmap.addListener('zoom_changed', syncZoomClasses);
+    gmap.addListener('click', function (ev) { if (editor) editorMapClick(ev.latLng); });
+    gmap.addListener('mousemove', function (ev) { if (editor) editorMapMove(ev.latLng); });
+    mapsReady = true;
+    syncZoomClasses();
+    fleet.forEach(syncMarker);
+    geofences.forEach(syncGeofenceShape);
+    if (state.loaded) fitAll();
+    if (state.selectedId) loadHistory(state.selectedId);
+  }
+
+  function syncZoomClasses() {
+    var z = gmap.getZoom();
+    $('map').classList.toggle('show-labels', z >= CONFIG.labelsZoom);
+    $('map').classList.toggle('show-gf-labels', z >= CONFIG.gfLabelsZoom);
+  }
+
+  function showMapMsg(title, text) {
+    var el = $('mapMsg');
+    el.innerHTML = '<div><strong>' + esc(title) + '</strong>' + esc(text) + '</div>';
+    el.hidden = false;
+  }
+
+  function createMarkerEl(e) {
+    var el = document.createElement('div');
+    el.className = 'vm';
+    el.innerHTML = '<span class="vm-pulse"></span>' +
+      '<span class="vm-body"><svg class="vm-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 19.5 20 12 15.8 4.5 20Z"/></svg></span>' +
+      '<span class="vm-label"></span>';
+    el.addEventListener('click', function (ev) {
+      if (editor) return;
+      ev.stopPropagation();
+      select(e.d.id, { pan: false, scrollList: true });
+    });
+    return el;
+  }
+
+  function tailPath(e) {
+    return e.tail.slice(0, -1).concat(e.pos ? [e.pos] : []);
+  }
+
+  function syncMarker(e) {
+    if (!mapsReady) return;
+    var visible = !!e.pos && matchesFilter(e);
+    var selected = state.selectedId === e.d.id;
+
+    if (e.pos && !e.marker) {
+      e.el = createMarkerEl(e);
+      e.marker = new google.maps.marker.AdvancedMarkerElement({ position: e.pos, content: e.el, title: e.d.name });
+    }
+    if (e.marker) {
+      var target = visible ? gmap : null;
+      if (e.marker.map !== target) e.marker.map = target;
+      if (e.pos && !e.anim) e.marker.position = e.pos;
+      e.marker.zIndex = selected ? 1000 : (e.status === 'moving' ? 10 : 1);
+      e.marker.title = e.d.name;
+      var hd = headingOf(e);
+      if (hd != null) {
+        // rotación acumulada para girar siempre por el camino más corto
+        e.rot = e.rot == null ? hd : e.rot + ((hd - e.rot % 360 + 540) % 360 - 180);
+        e.el.style.setProperty('--rot', e.rot + 'deg');
+      }
+      e.el.className = 'vm vm--' + e.status + (selected ? ' is-selected' : '') + (hd != null ? ' has-heading' : '');
+      e.el.querySelector('.vm-label').textContent = e.d.name;
+    }
+
+    var showTail = state.trails && visible && e.status !== 'offline' && e.tail.length > 1;
+    if (showTail) {
+      if (!e.tailLine) {
+        e.tailLine = new google.maps.Polyline({ clickable: false, strokeOpacity: 0.5, strokeWeight: 3, zIndex: 1 });
+      }
+      e.tailLine.setOptions({ strokeColor: colors[e.status] || colors.moving });
+      e.tailLine.setPath(tailPath(e));
+      if (e.tailLine.getMap() !== gmap) e.tailLine.setMap(gmap);
+    } else if (e.tailLine && e.tailLine.getMap()) {
+      e.tailLine.setMap(null);
+    }
+  }
+
+  function fitAll() {
+    if (!mapsReady) return;
+    var b = new google.maps.LatLngBounds();
+    var n = 0;
+    fleet.forEach(function (e) {
+      if (e.pos && matchesFilter(e)) {
+        b.extend(e.pos);
+        n++;
+      }
+    });
+    if (!n) return;
+    state.fitted = true;
+    if (n === 1) {
+      gmap.setCenter(b.getCenter());
+      gmap.setZoom(15);
+    } else {
+      var pad = isMobile() ? 40 : 70;
+      gmap.fitBounds(b, pad);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Animación
+  // ---------------------------------------------------------------------------
+  function frame(t) {
+    var followE = state.follow ? fleet.get(state.selectedId) : null;
+    var followMoved = false;
+    fleet.forEach(function (e) {
+      if (!e.anim) return;
+      var a = e.anim;
+      var k = clamp((t - a.start) / a.dur, 0, 1);
+      e.pos = { lat: a.from.lat + (a.to.lat - a.from.lat) * k, lng: a.from.lng + (a.to.lng - a.from.lng) * k };
+      if (k >= 1) e.anim = null;
+      if (e === followE) followMoved = true;
+      if (!mapsReady) return;
+      if (e.marker) e.marker.position = e.pos;
+      if (e.tailLine && e.tailLine.getMap()) e.tailLine.setPath(tailPath(e));
+    });
+    if (followMoved && mapsReady && followE.pos) gmap.setCenter(followE.pos);
+    replayStep(t);
+    requestAnimationFrame(frame);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Render del sidebar
+  // ---------------------------------------------------------------------------
+  function setOrg(name) {
+    if (name) $('orgName').textContent = name;
+  }
+
+  function renderAll() {
+    fleet.forEach(syncMarker);
+    renderCounts();
+    renderList();
+    if (state.selectedId) updateDetail();
+  }
+
+  function renderCounts() {
+    var c = { all: 0, moving: 0, idle: 0, offline: 0 };
+    fleet.forEach(function (e) {
+      c.all++;
+      c[e.status]++;
+    });
+    document.querySelectorAll('[data-count]').forEach(function (el) {
+      el.textContent = c[el.dataset.count];
+    });
+    $('fabCount').textContent = c.all;
+  }
+
+  function comparator() {
+    var byName = function (a, b) {
+      return a.d.name.localeCompare(b.d.name, 'es', { numeric: true, sensitivity: 'base' });
+    };
+    if (state.sort === 'status') {
+      return function (a, b) { return STATUS[a.status].order - STATUS[b.status].order || byName(a, b); };
+    }
+    if (state.sort === 'recent') {
+      return function (a, b) { return (b.d.lastSeen || 0) - (a.d.lastSeen || 0) || byName(a, b); };
+    }
+    return byName;
+  }
+
+  function createLi(e) {
+    var li = document.createElement('li');
+    li.className = 'dv';
+    li.tabIndex = 0;
+    li.setAttribute('role', 'option');
+    li.dataset.id = e.d.id;
+    li.innerHTML = '<span class="dv-dot"></span>' +
+      '<div class="dv-main"><div class="dv-name"></div><div class="dv-sub"></div></div>' +
+      '<div class="dv-meta"><div class="dv-speed"></div><div class="dv-time"></div></div>';
+    return li;
+  }
+
+  function updateLi(e) {
+    var li = e.li;
+    var d = e.d;
+    var selected = state.selectedId === d.id;
+    li.className = 'dv dv--' + e.status + (selected ? ' is-selected' : '');
+    li.setAttribute('aria-selected', selected ? 'true' : 'false');
+    li.querySelector('.dv-name').textContent = d.name;
+    var sub = STATUS[e.status].label;
+    if (!d.loc) sub += ' · No location';
+    else if (d.description) sub += ' · ' + d.description;
+    li.querySelector('.dv-sub').textContent = sub;
+    li.querySelector('.dv-speed').textContent = e.status === 'moving' && d.speed != null ? Math.round(d.speed) + ' km/h' : '';
+    var time = li.querySelector('.dv-time');
+    time.dataset.ts = d.lastSeen || '';
+    time.textContent = rel(d.lastSeen);
+  }
+
+  function renderList() {
+    var items = [];
+    fleet.forEach(function (e) { if (matchesFilter(e)) items.push(e); });
+    items.sort(comparator());
+    var order = items.map(function (e) { return e.d.id; }).join('|');
+    if (order !== state.lastOrder) {
+      var frag = document.createDocumentFragment();
+      items.forEach(function (e) {
+        if (!e.li) e.li = createLi(e);
+        frag.appendChild(e.li);
+      });
+      $('deviceList').replaceChildren(frag);
+      state.lastOrder = order;
+    }
+    items.forEach(updateLi);
+
+    var empty = $('listEmpty');
+    if (items.length) {
+      empty.hidden = true;
+    } else {
+      empty.hidden = false;
+      if (!state.loaded) empty.textContent = 'Loading fleet…';
+      else if (!fleet.size) empty.textContent = 'Your organization has no devices yet.';
+      else empty.textContent = 'No devices match the filter.';
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Selección y panel de detalle
+  // ---------------------------------------------------------------------------
+  var ICON_X = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  var ICON_TARGET = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>';
+  var ICON_PIN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>';
+  var ICON_PLAY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>';
+  var ICON_PAUSE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>';
+  var RANGES = [[15, '15 min'], [60, '1 h'], [360, '6 h'], [1440, '24 h']];
+  var REPLAY_SPEEDS = [10, 30, 60, 120];
+
+  function kv(label, field) {
+    return '<div class="kv"><span>' + label + '</span><strong data-f="' + field + '">—</strong></div>';
+  }
+
+  function detailHtml() {
+    var opts = RANGES.map(function (r) {
+      return '<option value="' + r[0] + '"' + (r[0] === state.historyMinutes ? ' selected' : '') + '>' + r[1] + '</option>';
+    }).join('');
+    var speedOpts = REPLAY_SPEEDS.map(function (s) {
+      return '<option value="' + s + '"' + (s === replay.speed ? ' selected' : '') + '>x' + s + '</option>';
+    }).join('');
+    return '<header class="dp-head">' +
+        '<div class="dp-title"><span class="badge" data-f="status"></span><h2 data-f="name"></h2><p data-f="sub"></p></div>' +
+        '<button class="icon-btn" type="button" data-act="close" aria-label="Close details">' + ICON_X + '</button>' +
+      '</header>' +
+      '<div class="dp-grid">' + kv('Speed', 'speed') + kv('Heading', 'heading') + kv('Last report', 'seen') + kv('Battery', 'battery') + '</div>' +
+      '<div class="dp-coords">' + ICON_PIN + '<span data-f="coords"></span><button class="link-btn" type="button" data-act="copy">Copy</button></div>' +
+      '<div class="dp-actions">' +
+        '<button class="btn" type="button" data-act="follow" aria-pressed="false">' + ICON_TARGET + 'Follow</button>' +
+        '<button class="btn" type="button" data-act="center">Center</button>' +
+        '<label class="dp-range">Route <select class="select" data-act="range">' + opts + '</select></label>' +
+      '</div>' +
+      '<p class="dp-history" data-f="history"></p>' +
+      '<div class="rp" data-f="replay" hidden>' +
+        '<button class="rp-play" type="button" data-act="play" aria-label="Play route">' + ICON_PLAY + '</button>' +
+        '<div class="rp-main">' +
+          '<input class="rp-bar" type="range" min="0" max="1000" value="0" data-act="scrub" aria-label="Route position">' +
+          '<div class="rp-info"><span data-f="rpTime">—</span><span data-f="rpSpeed"></span></div>' +
+        '</div>' +
+        '<select class="select" data-act="rpspeed" aria-label="Playback speed">' + speedOpts + '</select>' +
+        '<button class="icon-btn" type="button" data-act="rpstop" aria-label="Exit playback">' + ICON_X + '</button>' +
+      '</div>' +
+      '<div class="dp-section" data-f="gfWrap"><h3>Geofences</h3><div class="chips" data-f="gfs"></div></div>' +
+      '<div class="dp-section" data-f="tagsWrap"><h3>Tags</h3><div class="chips" data-f="tags"></div></div>' +
+      '<div class="dp-section" data-f="extrasWrap"><h3>Other attributes</h3><dl class="dp-extras" data-f="extras"></dl></div>';
+  }
+
+  function f(name) { return $('detail').querySelector('[data-f="' + name + '"]'); }
+
+  function updateDetail() {
+    var e = fleet.get(state.selectedId);
+    if (!e) return;
+    var d = e.d;
+    var hd = headingOf(e);
+
+    var badge = f('status');
+    badge.className = 'badge badge--' + e.status;
+    badge.textContent = STATUS[e.status].label;
+    f('name').textContent = d.name;
+    f('sub').textContent = d.description ? d.description + ' · ' + d.id : d.id;
+    f('speed').textContent = d.speed != null ? Math.round(d.speed) + ' km/h' : '—';
+    f('heading').textContent = hd != null ? Math.round(hd) + '° ' + cardinal(hd) : '—';
+    var seen = f('seen');
+    seen.dataset.ts = d.lastSeen || '';
+    seen.textContent = rel(d.lastSeen);
+    f('battery').textContent = d.battery != null ? Math.round(d.battery) + ' %' : '—';
+    f('coords').textContent = d.loc ? d.loc.lat.toFixed(5) + ', ' + d.loc.lng.toFixed(5) : 'No location reported';
+
+    var mine = [];
+    geofences.forEach(function (entry) {
+      var link = entry.g.devices.filter(function (x) { return x.deviceId === d.id; })[0];
+      if (link) mine.push({ g: entry.g, state: link.state });
+    });
+    mine.sort(function (a, b) { return byName(a.g, b.g); });
+    f('gfWrap').hidden = !mine.length;
+    f('gfs').innerHTML = mine.map(function (m) {
+      return '<button class="chip chip-gf" type="button" data-gf="' + esc(m.g.id) + '" style="--c:' + m.g.color + '">' +
+        '<i></i>' + esc(m.g.name) + ' · <b>' + GF_STATE_LABEL[m.state] + '</b></button>';
+    }).join('');
+
+    f('tagsWrap').hidden = !d.tags.length;
+    f('tags').innerHTML = d.tags.map(function (t) {
+      return '<span class="chip"><b>' + esc(t.key) + ':</b> ' + esc(t.value) + '</span>';
+    }).join('');
+
+    f('extrasWrap').hidden = !d.extras.length;
+    f('extras').innerHTML = d.extras.map(function (x) {
+      return '<dt>' + esc(x.key) + '</dt><dd>' + esc(fmtValue(x.value)) + '</dd>';
+    }).join('');
+
+    $('detail').querySelector('[data-act="follow"]').setAttribute('aria-pressed', state.follow ? 'true' : 'false');
+  }
+
+  function select(id, opts) {
+    opts = opts || {};
+    var e = fleet.get(id);
+    if (!e) return;
+    if (editor) closeEditor();
+    if (state.selectedId !== id) {
+      state.selectedId = id;
+      state.follow = false;
+      var detail = $('detail');
+      detail.innerHTML = detailHtml();
+      detail.hidden = false;
+      detail.scrollTop = 0;
+      updateDetail();
+      loadHistory(id);
+      renderAll();
+    }
+    if (opts.pan !== false && e.pos && mapsReady) {
+      gmap.panTo(e.pos);
+      if (gmap.getZoom() < 14) gmap.setZoom(15);
+    }
+    if (opts.scrollList && e.li && e.li.isConnected) e.li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (isMobile()) toggleSidebar(false);
+  }
+
+  function deselect() {
+    state.selectedId = null;
+    state.follow = false;
+    state.historyReq++;
+    clearHistory();
+    clearEvPin();
+    $('detail').hidden = true;
+    $('detail').innerHTML = '';
+    renderAll();
+  }
+
+  function setFollow(on) {
+    state.follow = on;
+    var btn = $('detail').querySelector('[data-act="follow"]');
+    if (btn) btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    var e = fleet.get(state.selectedId);
+    if (on && e && e.pos && mapsReady) {
+      gmap.panTo(e.pos);
+      if (gmap.getZoom() < 15) gmap.setZoom(16);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Recorrido histórico
+  // ---------------------------------------------------------------------------
+  function clearHistory() {
+    replayStop();
+    replay.pts = [];
+    if (historyLine) historyLine.setMap(null);
+    if (historyStart) historyStart.map = null;
+    historyLine = null;
+    historyStart = null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reproducción del recorrido
+  // ---------------------------------------------------------------------------
+  var replay = {
+    pts: [],
+    t: 0,
+    t0: 0,
+    t1: 0,
+    idx: 0,
+    speed: 30,
+    playing: false,
+    active: false,
+    last: 0,
+    rot: null,
+    marker: null,
+    el: null,
+    line: null,
+    pathIdx: -1
+  };
+  var REPLAY_GAP_MS = 60000;
+
+  function fmtClock(ts) {
+    var d = new Date(ts);
+    var time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    if (replay.t1 - replay.t0 < 20 * 3600000) return time;
+    return d.toLocaleDateString('en-US', { day: '2-digit', month: '2-digit' }) + ' ' + time;
+  }
+
+  function replaySetup(pts) {
+    replayStop();
+    if (pts.every(function (p) { return !p.time; })) {
+      pts.forEach(function (p, i) { p.time = i * 5000; });
+    }
+    replay.pts = pts;
+    replay.t0 = pts[0].time;
+    replay.t1 = pts[pts.length - 1].time;
+    replay.t = replay.t0;
+    replay.idx = 0;
+    var box = f('replay');
+    if (box) box.hidden = pts.length < 2 || replay.t1 <= replay.t0;
+    replayRenderUi();
+  }
+
+  function replayEnsureLayers() {
+    if (!mapsReady || replay.marker) return;
+    replay.el = document.createElement('div');
+    replay.el.className = 'vm vm--replay';
+    replay.el.innerHTML = '<span class="vm-body"><svg class="vm-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 19.5 20 12 15.8 4.5 20Z"/></svg></span>';
+    replay.marker = new google.maps.marker.AdvancedMarkerElement({ content: replay.el, zIndex: 2000, title: 'Playback' });
+    replay.line = new google.maps.Polyline({ clickable: false, strokeOpacity: 1, strokeWeight: 5, zIndex: 6 });
+  }
+
+  function replayActivate() {
+    if (replay.active) return;
+    replayEnsureLayers();
+    replay.active = true;
+    replay.pathIdx = -1;
+    if (state.follow) setFollow(false);
+    if (historyLine) historyLine.setOptions({ strokeOpacity: 0.35 });
+    if (replay.line) {
+      replay.line.setOptions({ strokeColor: colors.accent });
+      replay.line.setMap(gmap);
+    }
+  }
+
+  function replayPlay() {
+    if (replay.pts.length < 2) return;
+    if (replay.t >= replay.t1) {
+      replay.t = replay.t0;
+      replay.idx = 0;
+    }
+    replayActivate();
+    replay.playing = true;
+    replay.last = performance.now();
+    replayApply();
+    replayRenderUi();
+  }
+
+  function replayPause() {
+    replay.playing = false;
+    replayRenderUi();
+  }
+
+  function replayStop() {
+    replay.playing = false;
+    replay.active = false;
+    replay.rot = null;
+    if (replay.marker) replay.marker.map = null;
+    if (replay.line) replay.line.setMap(null);
+    if (historyLine) historyLine.setOptions({ strokeOpacity: 0.9 });
+    replay.t = replay.t0;
+    replay.idx = 0;
+    replayRenderUi();
+  }
+
+  function replayFindIdx(t) {
+    var pts = replay.pts;
+    var lo = 0;
+    var hi = pts.length - 2;
+    while (lo < hi) {
+      var mid = (lo + hi + 1) >> 1;
+      if (pts[mid].time <= t) lo = mid;
+      else hi = mid - 1;
+    }
+    return Math.max(0, lo);
+  }
+
+  function replaySeek(frac) {
+    if (replay.pts.length < 2) return;
+    replay.t = replay.t0 + (replay.t1 - replay.t0) * frac;
+    replay.idx = replayFindIdx(replay.t);
+    replay.pathIdx = -1;
+    replay.last = performance.now();
+    replayActivate();
+    replayApply();
+    replayRenderUi();
+  }
+
+  function replayStep(now) {
+    if (!replay.playing) return;
+    var dt = now - replay.last;
+    replay.last = now;
+    var pts = replay.pts;
+    var seg = pts[replay.idx + 1].time - pts[replay.idx].time;
+    // las pausas largas (sin reportes) se saltan en ~1,5 s
+    var rate = seg > REPLAY_GAP_MS ? Math.max(replay.speed, seg / 1500) : replay.speed;
+    replay.t += dt * rate;
+    while (replay.idx < pts.length - 2 && replay.t >= pts[replay.idx + 1].time) replay.idx++;
+    if (replay.t >= replay.t1) {
+      replay.t = replay.t1;
+      replay.playing = false;
+    }
+    replayApply();
+    replayRenderUi();
+  }
+
+  function replayCurrent() {
+    var a = replay.pts[replay.idx];
+    var b = replay.pts[replay.idx + 1];
+    var seg = b.time - a.time;
+    var k = seg > 0 ? clamp((replay.t - a.time) / seg, 0, 1) : 1;
+    var speed = a.speed;
+    if (speed == null) speed = seg > 0 && seg <= REPLAY_GAP_MS ? haversine(a, b) / (seg / 1000) * 3.6 : 0;
+    return {
+      a: a,
+      b: b,
+      speed: speed,
+      pos: { lat: a.lat + (b.lat - a.lat) * k, lng: a.lng + (b.lng - a.lng) * k }
+    };
+  }
+
+  function replayApply() {
+    if (!mapsReady || !replay.marker || replay.pts.length < 2) return;
+    var r = replayCurrent();
+    replay.marker.position = r.pos;
+    if (replay.marker.map !== gmap) replay.marker.map = gmap;
+
+    if (haversine(r.a, r.b) > 1) {
+      var hd = bearing(r.a, r.b);
+      replay.rot = replay.rot == null ? hd : replay.rot + ((hd - replay.rot % 360 + 540) % 360 - 180);
+      replay.el.style.setProperty('--rot', replay.rot + 'deg');
+    }
+
+    // tramo ya recorrido: se reconstruye solo al cambiar de segmento
+    var path = replay.line.getPath();
+    if (replay.pathIdx !== replay.idx) {
+      replay.line.setPath(replay.pts.slice(0, replay.idx + 1).map(function (p) {
+        return { lat: p.lat, lng: p.lng };
+      }).concat([r.pos]));
+      replay.pathIdx = replay.idx;
+    } else {
+      path.setAt(path.getLength() - 1, new google.maps.LatLng(r.pos.lat, r.pos.lng));
+    }
+
+    var bounds = gmap.getBounds();
+    if (bounds && !bounds.contains(r.pos)) gmap.panTo(r.pos);
+  }
+
+  function replayRenderUi() {
+    var box = f('replay');
+    if (!box || box.hidden) return;
+    var btn = box.querySelector('[data-act="play"]');
+    var playing = replay.playing;
+    if (btn.dataset.playing !== String(playing)) {
+      btn.dataset.playing = String(playing);
+      btn.innerHTML = playing ? ICON_PAUSE : ICON_PLAY;
+      btn.setAttribute('aria-label', playing ? 'Pause playback' : 'Play route');
+    }
+    var span = replay.t1 - replay.t0;
+    var bar = box.querySelector('[data-act="scrub"]');
+    if (document.activeElement !== bar || playing) bar.value = span > 0 ? Math.round((replay.t - replay.t0) / span * 1000) : 0;
+    if (!replay.pts.length) return;
+    f('rpTime').textContent = fmtClock(replay.t);
+    f('rpSpeed').textContent = replay.active && replay.pts.length > 1 ? Math.round(replayCurrent().speed) + ' km/h' : '';
+  }
+
+  function setHistoryText(text) {
+    var el = f('history');
+    if (el) el.textContent = text;
+  }
+
+  function pathKm(pts) {
+    var m = 0;
+    for (var i = 1; i < pts.length; i++) m += haversine(pts[i - 1], pts[i]);
+    return m / 1000;
+  }
+
+  function loadHistory(id) {
+    clearHistory();
+    var req = ++state.historyReq;
+    setHistoryText('Loading route…');
+    var p = CONFIG.demo ?
+      Promise.resolve(Demo.history(id, state.historyMinutes)) :
+      getJSON(CONFIG.endpoints.history.replace(':deviceId', encodeURIComponent(id)) + '?minutes=' + state.historyMinutes);
+
+    p.then(function (payload) {
+      if (req !== state.historyReq) return;
+      var pts = extractPoints(payload, id);
+      if (!pts.length) {
+        setHistoryText('No locations recorded in this period.');
+        return;
+      }
+      var label = RANGES.filter(function (r) { return r[0] === state.historyMinutes; })[0];
+      setHistoryText(pts.length + ' points · ' + pathKm(pts).toFixed(1) + ' km in ' + (label ? label[1] : state.historyMinutes + ' min'));
+      replaySetup(pts);
+      if (!mapsReady) return;
+      var path = pts.map(function (q) { return { lat: q.lat, lng: q.lng }; });
+      historyLine = new google.maps.Polyline({
+        map: gmap,
+        path: path,
+        clickable: false,
+        strokeColor: colors.accent,
+        strokeOpacity: 0.9,
+        strokeWeight: 4,
+        zIndex: 5,
+        icons: [{
+          icon: { path: google.maps.SymbolPath.FORWARD_OPEN_ARROW, scale: 2, strokeOpacity: 1 },
+          repeat: '110px'
+        }]
+      });
+      var startEl = document.createElement('div');
+      startEl.className = 'vh-start';
+      historyStart = new google.maps.marker.AdvancedMarkerElement({ map: gmap, position: path[0], content: startEl, title: 'Route start', zIndex: 4 });
+    }).catch(function (err) {
+      if (req !== state.historyReq) return;
+      setHistoryText(err.status === 404 ? 'The route endpoint is not available yet.' : 'Could not load the route.');
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Geofences: geometría
+  // Misma lógica que losant-workflows/functions/geofence-evaluator.js: si se
+  // cambia una, cambiar la otra.
+  // ---------------------------------------------------------------------------
+  var GF_HYSTERESIS_M = 20;
+  var GF_COLORS = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2'];
+  var GF_STATE_LABEL = { inside: 'Inside', outside: 'Outside', unknown: 'No data' };
+
+  // proyección local en metros alrededor de "origin" (suficiente para geofences de pocos km)
+  function localXY(origin, p) {
+    return {
+      x: toRad(p.lng - origin.lng) * 6371000 * Math.cos(toRad(origin.lat)),
+      y: toRad(p.lat - origin.lat) * 6371000
+    };
+  }
+
+  // distancia desde el origen (0,0) al segmento a-b
+  function originToSegment(a, b) {
+    var dx = b.x - a.x;
+    var dy = b.y - a.y;
+    var len2 = dx * dx + dy * dy;
+    var t = len2 ? clamp(-(a.x * dx + a.y * dy) / len2, 0, 1) : 0;
+    return Math.sqrt(Math.pow(a.x + t * dx, 2) + Math.pow(a.y + t * dy, 2));
+  }
+
+  // distancia en metros al borde de la geofence: negativa adentro, positiva afuera
+  function gfOutside(g, p) {
+    if (g.shape === 'circle') return haversine(g.center, p) - g.radiusM;
+    var pts = g.polygon.map(function (q) { return localXY(p, q); });
+    var inside = false;
+    var edge = Infinity;
+    for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      var a = pts[i];
+      var b = pts[j];
+      if ((a.y > 0) !== (b.y > 0) && (b.x - a.x) * -a.y / (b.y - a.y) + a.x > 0) inside = !inside;
+      edge = Math.min(edge, originToSegment(a, b));
+    }
+    return inside ? -edge : edge;
+  }
+
+  // para salir hay que alejarse GF_HYSTERESIS_M del borde: evita rebotes del GPS en el límite
+  function gfNextState(g, p, prev) {
+    var out = gfOutside(g, p);
+    if (out <= 0) return 'inside';
+    return prev === 'inside' && out <= GF_HYSTERESIS_M ? 'inside' : 'outside';
+  }
+
+  function centroid(pts) {
+    var lat = 0;
+    var lng = 0;
+    pts.forEach(function (p) {
+      lat += p.lat;
+      lng += p.lng;
+    });
+    return pts.length ? { lat: lat / pts.length, lng: lng / pts.length } : null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Geofences: datos y capa del mapa
+  // ---------------------------------------------------------------------------
+  var geofences = new Map();
+  var gfStatus = { loaded: false, error: null };
+
+  function safeColor(c) { return /^#[0-9a-f]{6}$/i.test(c || '') ? c : GF_COLORS[0]; }
+
+  function parsePolygon(v) {
+    if (typeof v === 'string') {
+      try { v = JSON.parse(v); } catch (e) { return []; }
+    }
+    return Array.isArray(v) ? v.map(parseLocation).filter(Boolean) : [];
+  }
+
+  function normalizeGeofence(raw) {
+    if (!raw) return null;
+    var id = raw.id || raw._id || raw.geofenceId;
+    if (!id) return null;
+    var shape = raw.shape === 'polygon' ? 'polygon' : 'circle';
+    var g = {
+      id: String(id),
+      name: raw.name || 'Unnamed',
+      shape: shape,
+      color: safeColor(raw.color),
+      enabled: raw.enabled !== false && raw.enabled !== 'false',
+      center: toLatLng(parseFloat(raw.centerLat), parseFloat(raw.centerLng)),
+      radiusM: parseFloat(raw.radiusM) || 0,
+      polygon: shape === 'polygon' ? parsePolygon(raw.polygon) : []
+    };
+    if (shape === 'circle' && (!g.center || !(g.radiusM > 0))) return null;
+    if (shape === 'polygon' && g.polygon.length < 3) return null;
+    if (!g.center) g.center = centroid(g.polygon);
+    var links = raw.devices || (raw.deviceIds || []);
+    g.devices = links.map(function (x) {
+      return typeof x === 'string' ? { deviceId: x } : x;
+    }).filter(function (x) { return x && x.deviceId; }).map(function (x) {
+      return { deviceId: String(x.deviceId), state: GF_STATE_LABEL[x.state] ? x.state : 'unknown' };
+    });
+    return g;
+  }
+
+  function loadGeofences() {
+    return api('GET', CONFIG.endpoints.geofences).then(function (payload) {
+      var p = unwrap(payload);
+      gfStatus.error = null;
+      applyGeofences(Array.isArray(p) ? p : (p && (p.geofences || p.items)) || []);
+    }).catch(function (err) {
+      gfStatus.error = err;
+      gfStatus.loaded = true;
+      renderGeofenceList();
+    });
+  }
+
+  function applyGeofences(list) {
+    var seen = new Set();
+    list.forEach(function (raw) {
+      var g = normalizeGeofence(raw);
+      if (!g) return;
+      seen.add(g.id);
+      var entry = geofences.get(g.id);
+      if (entry) entry.g = g;
+      else geofences.set(g.id, { g: g, shape: null, label: null, el: null, sig: '' });
+      syncGeofenceShape(geofences.get(g.id));
+    });
+    Array.from(geofences.keys()).forEach(function (id) { if (!seen.has(id)) removeGeofence(id); });
+    gfStatus.loaded = true;
+    renderGeofenceList();
+    if (state.selectedId) updateDetail();
+  }
+
+  function removeGeofence(id) {
+    var entry = geofences.get(id);
+    if (!entry) return;
+    if (entry.shape) entry.shape.setMap(null);
+    if (entry.label) entry.label.map = null;
+    geofences.delete(id);
+  }
+
+  function gfSig(g) {
+    return g.shape === 'circle' ? 'c' + g.center.lat + ',' + g.center.lng + ',' + g.radiusM : 'p' + JSON.stringify(g.polygon);
+  }
+
+  function syncGeofenceShape(entry) {
+    if (!mapsReady) return;
+    var g = entry.g;
+    var sig = gfSig(g);
+    if (entry.shape && entry.sig !== sig) {
+      entry.shape.setMap(null);
+      entry.shape = null;
+    }
+    if (!entry.shape) {
+      entry.shape = g.shape === 'circle' ?
+        new google.maps.Circle({ center: g.center, radius: g.radiusM }) :
+        new google.maps.Polygon({ paths: g.polygon });
+      entry.sig = sig;
+      entry.shape.addListener('click', function () { openEditor(entry.g.id); });
+    }
+    if (!entry.label) {
+      entry.el = document.createElement('div');
+      entry.el.className = 'gf-label';
+      entry.label = new google.maps.marker.AdvancedMarkerElement({ content: entry.el, zIndex: 0 });
+    }
+    var visible = state.gfLayer && !(editor && editor.id === g.id);
+    entry.shape.setOptions({
+      clickable: !editor,
+      strokeColor: g.color,
+      strokeOpacity: g.enabled ? 0.9 : 0.45,
+      strokeWeight: 2,
+      fillColor: g.color,
+      fillOpacity: g.enabled ? 0.12 : 0.04,
+      zIndex: 0
+    });
+    var target = visible ? gmap : null;
+    if (entry.shape.getMap() !== target) entry.shape.setMap(target);
+    entry.el.textContent = g.name;
+    entry.el.style.setProperty('--c', g.color);
+    entry.label.position = g.center;
+    if (entry.label.map !== target) entry.label.map = target;
+  }
+
+  function renderGeofenceList() {
+    var items = [];
+    geofences.forEach(function (entry) {
+      if (!state.gfSearch || entry.g.name.toLowerCase().indexOf(state.gfSearch) !== -1) items.push(entry.g);
+    });
+    items.sort(byName);
+    $('gfList').innerHTML = items.map(function (g) {
+      var inside = g.devices.filter(function (x) { return x.state === 'inside'; }).length;
+      var sub = (g.shape === 'circle' ? 'Circle · ' + fmtDistance(g.radiusM) : 'Polygon · ' + g.polygon.length + ' vertices') +
+        ' · ' + plural(g.devices.length, 'device', 'devices');
+      if (!g.enabled) sub = 'Disabled · ' + sub;
+      return '<li class="gf gf--' + g.shape + (g.enabled ? '' : ' gf--off') + (editor && editor.id === g.id ? ' is-selected' : '') +
+          '" tabindex="0" data-id="' + esc(g.id) + '" style="--c:' + g.color + '">' +
+        '<span class="gf-sw"></span>' +
+        '<div class="dv-main"><div class="dv-name">' + esc(g.name) + '</div><div class="dv-sub">' + esc(sub) + '</div></div>' +
+        (inside ? '<span class="gf-in">' + inside + ' inside</span>' : '') +
+      '</li>';
+    }).join('');
+
+    var empty = $('gfEmpty');
+    empty.hidden = items.length > 0;
+    if (!gfStatus.loaded) empty.textContent = 'Loading geofences…';
+    else if (gfStatus.error && !geofences.size) {
+      empty.textContent = gfStatus.error.status === 404 ?
+        'The ' + CONFIG.endpoints.geofences + ' endpoint does not exist yet.' :
+        apiErrorText(gfStatus.error, 'Could not load geofences.');
+    } else if (!geofences.size) empty.textContent = 'No geofences yet. Create the first one with “New”.';
+    else empty.textContent = 'No geofences match the search.';
+  }
+
+  function overlayBounds(o) {
+    if (o.getRadius) return o.getBounds();
+    var b = new google.maps.LatLngBounds();
+    o.getPath().forEach(function (ll) { b.extend(ll); });
+    return b;
+  }
+
+  // deja libre la zona que tapa el panel
+  function fitPadding() {
+    if (isMobile()) return { top: 60, right: 30, bottom: Math.round($('map').clientHeight * 0.55) + 20, left: 30 };
+    return { top: 50, right: 70, bottom: 50, left: 380 };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Eventos (log genérico de alarmas)
+  // ---------------------------------------------------------------------------
+  var ICON_IN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5M15 12H3"/></svg>';
+  var ICON_OUT = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>';
+  var ICON_BELL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
+  // tipos conocidos; cualquier otro "type" se muestra con el ícono genérico
+  var ALARM_TYPES = {
+    'geofence.enter': { label: 'Entry', verb: 'entered', icon: ICON_IN, cls: 'ev--enter' },
+    'geofence.exit': { label: 'Exit', verb: 'exited', icon: ICON_OUT, cls: 'ev--exit' }
+  };
+
+  var alarms = [];
+  var alarmStatus = { loaded: false, error: null, req: 0 };
+  var evPin = null;
+
+  function alarmMeta(type) {
+    return ALARM_TYPES[type] || { label: type, verb: '', icon: ICON_BELL, cls: 'ev--alarm' };
+  }
+
+  function normalizeAlarm(raw) {
+    if (!raw) return null;
+    var a = {
+      id: String(raw.id || raw._id || ''),
+      type: String(raw.type || 'alarm'),
+      severity: raw.severity || 'info',
+      deviceId: raw.deviceId ? String(raw.deviceId) : '',
+      deviceName: raw.deviceName || '',
+      refId: raw.refId ? String(raw.refId) : '',
+      refName: raw.refName || '',
+      message: raw.message || '',
+      loc: parseLocation(raw.location),
+      time: toTime(raw.eventTime) || toTime(raw.createdAt)
+    };
+    if (!a.deviceName) {
+      var e = fleet.get(a.deviceId);
+      a.deviceName = e ? e.d.name : a.deviceId;
+    }
+    if (!a.message) {
+      var meta = alarmMeta(a.type);
+      a.message = meta.verb && a.refName ? a.deviceName + ' ' + meta.verb + ' ' + a.refName : a.deviceName + ' · ' + meta.label;
+    }
+    return a;
+  }
+
+  function loadAlarms() {
+    var req = ++alarmStatus.req;
+    var filter = state.evFilter;
+    var qs = '?limit=' + CONFIG.alarmsLimit + (filter !== 'all' ? '&type=' + encodeURIComponent(filter) : '');
+    return api('GET', CONFIG.endpoints.alarms + qs).then(function (payload) {
+      if (req !== alarmStatus.req) return;
+      var p = unwrap(payload);
+      var list = Array.isArray(p) ? p : (p && (p.items || p.alarms || p.events)) || [];
+      alarms = list.map(normalizeAlarm).filter(function (a) {
+        return a && (filter === 'all' || a.type === filter);
+      }).sort(function (a, b) { return (b.time || 0) - (a.time || 0); });
+      var newest = alarms.length ? alarms[0].time || 0 : 0;
+      // en la primera carga el historial no cuenta como "nuevo"
+      if (!alarmStatus.loaded || state.tab === 'events') state.evSeen = Math.max(state.evSeen, newest);
+      alarmStatus.loaded = true;
+      alarmStatus.error = null;
+      renderAlarms();
+    }).catch(function (err) {
+      if (req !== alarmStatus.req) return;
+      alarmStatus.loaded = true;
+      alarmStatus.error = err;
+      renderAlarms();
+    });
+  }
+
+  function renderAlarms() {
+    $('evList').innerHTML = alarms.map(function (a, i) {
+      var meta = alarmMeta(a.type);
+      return '<li class="ev ' + meta.cls + '" tabindex="0" data-i="' + i + '">' +
+        '<span class="ev-ic">' + meta.icon + '</span>' +
+        '<div class="ev-main"><div class="ev-msg">' + esc(a.message) + '</div>' +
+        '<div class="ev-sub">' + esc(meta.label) + ' · <span data-ts="' + (a.time || '') + '">' + rel(a.time) + '</span>' +
+          (a.time ? ' · ' + esc(fmtDateTime(a.time)) : '') + '</div></div>' +
+      '</li>';
+    }).join('');
+
+    var empty = $('evEmpty');
+    empty.hidden = alarms.length > 0;
+    if (!alarmStatus.loaded) empty.textContent = 'Loading events…';
+    else if (alarmStatus.error) {
+      empty.textContent = alarmStatus.error.status === 404 ?
+        'The ' + CONFIG.endpoints.alarms + ' endpoint does not exist yet.' :
+        apiErrorText(alarmStatus.error, 'Could not load events.');
+    } else empty.textContent = 'No events recorded.';
+
+    var unseen = alarms.filter(function (a) { return a.time > state.evSeen; }).length;
+    var badge = $('evBadge');
+    badge.hidden = !unseen || state.tab === 'events';
+    badge.textContent = unseen > 99 ? '99+' : unseen;
+  }
+
+  function clearEvPin() {
+    if (evPin) evPin.map = null;
+    evPin = null;
+  }
+
+  function focusAlarm(a) {
+    if (!a) return;
+    if (a.deviceId && fleet.has(a.deviceId)) select(a.deviceId, { pan: false });
+    else if (isMobile()) toggleSidebar(false);
+    if (!a.loc || !mapsReady) return;
+    clearEvPin();
+    var el = document.createElement('div');
+    el.className = 'ev-pin ' + alarmMeta(a.type).cls;
+    evPin = new google.maps.marker.AdvancedMarkerElement({ map: gmap, position: a.loc, content: el, title: a.message, zIndex: 1500 });
+    gmap.panTo(a.loc);
+    if (gmap.getZoom() < 15) gmap.setZoom(16);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Editor de geofences (dibujo propio: la Drawing Library de Google ya no existe)
+  // ---------------------------------------------------------------------------
+  var editor = null;
+
+  function gq(name) { return $('gfPanel').querySelector('[data-g="' + name + '"]'); }
+
+  function openEditor(id) {
+    if (!mapsReady || (editor && editor.saving)) return;
+    var entry = id ? geofences.get(id) : null;
+    if (id && !entry) return;
+    if (editor) closeEditor();
+    if (state.selectedId) deselect();
+    var g = entry ? entry.g : null;
+    editor = {
+      id: g ? g.id : null,
+      original: g,
+      shape: g ? g.shape : 'circle',
+      mode: g ? 'edit' : 'draw',
+      color: g ? g.color : GF_COLORS[geofences.size % GF_COLORS.length],
+      deviceIds: new Set(g ? g.devices.map(function (x) { return x.deviceId; }) : []),
+      devSearch: '',
+      draft: [],
+      vertices: [],
+      draftLine: null,
+      rubber: null,
+      overlay: null,
+      saving: false
+    };
+    var panel = $('gfPanel');
+    panel.innerHTML = editorHtml();
+    panel.hidden = false;
+    panel.scrollTop = 0;
+    gq('name').value = g ? g.name : '';
+    gq('enabled').checked = g ? g.enabled : true;
+    renderEditorDevices();
+    if (g) {
+      buildOverlay(g.shape === 'circle' ? { center: g.center, radiusM: g.radiusM } : { path: g.polygon });
+      gmap.fitBounds(overlayBounds(editor.overlay), fitPadding());
+    } else {
+      startDraw();
+    }
+    renderEditorState();
+    geofences.forEach(syncGeofenceShape);
+    renderGeofenceList();
+    if (isMobile()) toggleSidebar(false);
+  }
+
+  function closeEditor() {
+    if (!editor) return;
+    clearDraft();
+    if (editor.overlay) editor.overlay.setMap(null);
+    editor = null;
+    gmap.setOptions({ draggableCursor: null });
+    $('gfPanel').hidden = true;
+    $('gfPanel').innerHTML = '';
+    geofences.forEach(syncGeofenceShape);
+    renderGeofenceList();
+  }
+
+  function editorHtml() {
+    var swatches = GF_COLORS.map(function (c) {
+      return '<button class="swatch" type="button" data-act="color" data-color="' + c + '" style="--c:' + c + '" aria-label="Color ' + c + '"></button>';
+    }).join('');
+    return '<header class="dp-head">' +
+        '<div class="dp-title"><span class="fs-eyebrow">' + (editor.id ? 'Edit geofence' : 'New geofence') + '</span><h2 data-g="title"></h2></div>' +
+        '<button class="icon-btn" type="button" data-act="cancel" aria-label="Close editor">' + ICON_X + '</button>' +
+      '</header>' +
+      '<label class="fld"><span>Name</span><input class="input" data-g="name" maxlength="60" placeholder="e.g. Main warehouse" autocomplete="off"></label>' +
+      '<div class="fld"><span>Shape</span><div class="seg" role="group" aria-label="Shape">' +
+        '<button type="button" data-act="shape" data-shape="circle">Circle</button>' +
+        '<button type="button" data-act="shape" data-shape="polygon">Polygon</button>' +
+      '</div></div>' +
+      '<p class="gp-hint" data-g="hint"></p>' +
+      '<div class="gp-tools" data-g="drawTools">' +
+        '<button class="btn" type="button" data-act="undo">Undo point</button>' +
+        '<button class="btn" type="button" data-act="finish">Close polygon</button>' +
+      '</div>' +
+      '<label class="fld" data-g="radiusWrap"><span>Radius (meters)</span>' +
+        '<input class="input" data-g="radius" type="number" min="20" max="50000" step="10" inputmode="numeric"></label>' +
+      '<div class="gp-tools" data-g="editTools">' +
+        '<button class="btn" type="button" data-act="redraw">Redraw</button>' +
+        '<button class="btn" type="button" data-act="zoom">Show on map</button>' +
+      '</div>' +
+      '<div class="fld"><span>Color</span><div class="swatches">' + swatches + '</div></div>' +
+      '<label class="gp-check"><input type="checkbox" data-g="enabled"> Enabled (logs entries and exits)</label>' +
+      '<div class="fld"><span>Devices <em data-g="devCount"></em></span>' +
+        '<div class="gp-devtools">' +
+          '<input class="input" data-g="devSearch" type="search" placeholder="Filter devices" autocomplete="off" aria-label="Filter devices">' +
+          '<button class="link-btn" type="button" data-act="devAll">All</button>' +
+          '<button class="link-btn" type="button" data-act="devNone">None</button>' +
+        '</div>' +
+        '<div class="gp-devs" data-g="devs"></div>' +
+      '</div>' +
+      '<p class="gp-err" data-g="error" role="alert" hidden></p>' +
+      '<div class="gp-foot">' +
+        (editor.id ? '<button class="btn btn-danger" type="button" data-act="delete">Delete</button>' : '') +
+        '<span class="gp-spacer"></span>' +
+        '<button class="btn" type="button" data-act="cancel">Cancel</button>' +
+        '<button class="btn btn-primary" type="button" data-act="save">Save</button>' +
+      '</div>';
+  }
+
+  function renderEditorState() {
+    if (!editor) return;
+    var e = editor;
+    var panel = $('gfPanel');
+    var drawing = e.mode === 'draw';
+    gq('title').textContent = gq('name').value.trim() || (e.original ? e.original.name : 'Unnamed');
+    panel.querySelectorAll('[data-act="shape"]').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.dataset.shape === e.shape ? 'true' : 'false');
+    });
+    panel.querySelectorAll('[data-act="color"]').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.dataset.color === e.color ? 'true' : 'false');
+    });
+    var hint;
+    if (drawing && e.shape === 'circle') hint = 'Click on the map to place the circle center.';
+    else if (drawing) {
+      hint = e.draft.length < 3 ?
+        'Click on the map to add vertices (at least 3).' :
+        'Keep adding vertices or click the first point to close the polygon.';
+    } else if (e.shape === 'circle') hint = 'Drag the circle to move it and the edge points to change the radius.';
+    else hint = 'Drag the vertices to adjust the shape (' + e.overlay.getPath().getLength() + ' vertices). Right-click a vertex to delete it.';
+    gq('hint').textContent = hint;
+    gq('drawTools').hidden = !(drawing && e.shape === 'polygon');
+    panel.querySelector('[data-act="undo"]').disabled = !e.draft.length;
+    panel.querySelector('[data-act="finish"]').disabled = e.draft.length < 3;
+    gq('radiusWrap').hidden = drawing || e.shape !== 'circle';
+    gq('editTools').hidden = drawing;
+    syncRadiusInput();
+    var save = panel.querySelector('[data-act="save"]');
+    save.disabled = e.saving;
+    save.textContent = e.saving ? 'Saving…' : 'Save';
+    var del = panel.querySelector('[data-act="delete"]');
+    if (del) del.disabled = e.saving;
+  }
+
+  function syncRadiusInput() {
+    var input = gq('radius');
+    if (!input || !editor.overlay || editor.shape !== 'circle' || document.activeElement === input) return;
+    input.value = Math.round(editor.overlay.getRadius());
+  }
+
+  function renderEditorDevices() {
+    var e = editor;
+    var states = {};
+    if (e.original) e.original.devices.forEach(function (x) { states[x.deviceId] = x.state; });
+    var items = [];
+    fleet.forEach(function (entry) {
+      if (!e.devSearch || entry.d.hay.indexOf(e.devSearch) !== -1) items.push(entry.d);
+    });
+    items.sort(byName);
+    gq('devs').innerHTML = items.length ? items.map(function (d) {
+      var checked = e.deviceIds.has(d.id);
+      var st = checked && states[d.id] && states[d.id] !== 'unknown' ? states[d.id] : '';
+      return '<label class="gp-dev"><input type="checkbox" data-dev="' + esc(d.id) + '"' + (checked ? ' checked' : '') + '>' +
+        '<span class="gp-dev-name">' + esc(d.name) + '</span>' +
+        (st ? '<span class="gp-state gp-state--' + st + '">' + GF_STATE_LABEL[st] + '</span>' : '') +
+      '</label>';
+    }).join('') : '<p class="gp-devs-empty">' + (fleet.size ? 'No devices match.' : 'No devices.') + '</p>';
+    renderDevCount();
+  }
+
+  function renderDevCount() {
+    gq('devCount').textContent = '· ' + editor.deviceIds.size + ' selected';
+  }
+
+  function editorError(msg, focusEl) {
+    var el = gq('error');
+    el.textContent = msg || '';
+    el.hidden = !msg;
+    if (focusEl) focusEl.focus();
+  }
+
+  function setEditorColor(c) {
+    var e = editor;
+    e.color = c;
+    var style = { strokeColor: c, fillColor: c };
+    if (e.overlay) e.overlay.setOptions(style);
+    if (e.draftLine) e.draftLine.setOptions(style);
+    if (e.rubber) e.rubber.setOptions(style);
+    renderEditorState();
+  }
+
+  function clearDraft() {
+    var e = editor;
+    e.vertices.forEach(function (m) { m.map = null; });
+    e.vertices = [];
+    if (e.draftLine) e.draftLine.setMap(null);
+    if (e.rubber) e.rubber.setMap(null);
+    e.draftLine = null;
+    e.rubber = null;
+    e.draft = [];
+  }
+
+  function startDraw() {
+    var e = editor;
+    clearDraft();
+    if (e.overlay) e.overlay.setMap(null);
+    e.overlay = null;
+    e.mode = 'draw';
+    gmap.setOptions({ draggableCursor: 'crosshair' });
+    renderEditorState();
+  }
+
+  function defaultRadius() {
+    var b = gmap.getBounds();
+    if (!b) return 200;
+    var ne = b.getNorthEast();
+    var sw = b.getSouthWest();
+    var width = haversine({ lat: sw.lat(), lng: sw.lng() }, { lat: sw.lat(), lng: ne.lng() });
+    return clamp(Math.round(width * 0.08 / 10) * 10, 50, 5000);
+  }
+
+  function editorMapClick(latLng) {
+    var e = editor;
+    if (e.mode !== 'draw') return;
+    var p = { lat: latLng.lat(), lng: latLng.lng() };
+    if (e.shape === 'circle') {
+      buildOverlay({ center: p, radiusM: defaultRadius() });
+      e.mode = 'edit';
+      gmap.setOptions({ draggableCursor: null });
+    } else {
+      e.draft.push(p);
+      drawDraft();
+    }
+    renderEditorState();
+  }
+
+  function editorMapMove(latLng) {
+    var e = editor;
+    if (e.mode !== 'draw' || e.shape !== 'polygon' || !e.draft.length) return;
+    if (!e.rubber) {
+      e.rubber = new google.maps.Polyline({ map: gmap, clickable: false, strokeColor: e.color, strokeOpacity: 0.5, strokeWeight: 2, zIndex: 19 });
+    }
+    var first = e.draft[0];
+    var last = e.draft[e.draft.length - 1];
+    e.rubber.setPath(e.draft.length > 1 ? [last, latLng, first] : [last, latLng]);
+  }
+
+  function drawDraft() {
+    var e = editor;
+    if (!e.draftLine) {
+      e.draftLine = new google.maps.Polyline({ map: gmap, clickable: false, strokeColor: e.color, strokeOpacity: 1, strokeWeight: 2, zIndex: 20 });
+    }
+    e.draftLine.setPath(e.draft);
+    while (e.vertices.length < e.draft.length) {
+      var first = e.vertices.length === 0;
+      var el = document.createElement('div');
+      el.className = 'gp-vx' + (first ? ' gp-vx--first' : '');
+      if (first) {
+        el.title = 'Close polygon';
+        el.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          finishPolygon();
+        });
+      }
+      e.vertices.push(new google.maps.marker.AdvancedMarkerElement({ map: gmap, position: e.draft[e.vertices.length], content: el, zIndex: 3000 }));
+    }
+    while (e.vertices.length > e.draft.length) e.vertices.pop().map = null;
+    if (e.rubber && !e.draft.length) e.rubber.setPath([]);
+  }
+
+  function undoVertex() {
+    editor.draft.pop();
+    drawDraft();
+    renderEditorState();
+  }
+
+  function finishPolygon() {
+    var e = editor;
+    if (!e || e.draft.length < 3) return;
+    var path = e.draft.slice();
+    clearDraft();
+    buildOverlay({ path: path });
+    e.mode = 'edit';
+    gmap.setOptions({ draggableCursor: null });
+    renderEditorState();
+  }
+
+  function buildOverlay(geo) {
+    var e = editor;
+    if (e.overlay) e.overlay.setMap(null);
+    var opts = {
+      map: gmap,
+      editable: true,
+      draggable: true,
+      strokeColor: e.color,
+      strokeOpacity: 1,
+      strokeWeight: 2,
+      fillColor: e.color,
+      fillOpacity: 0.2,
+      zIndex: 10
+    };
+    var o;
+    if (geo.center) {
+      opts.center = geo.center;
+      opts.radius = geo.radiusM;
+      o = new google.maps.Circle(opts);
+      o.addListener('radius_changed', syncRadiusInput);
+    } else {
+      opts.paths = geo.path;
+      o = new google.maps.Polygon(opts);
+      o.addListener('contextmenu', function (ev) {
+        var path = o.getPath();
+        if (ev.vertex != null && path.getLength() > 3) path.removeAt(ev.vertex);
+      });
+      ['set_at', 'insert_at', 'remove_at'].forEach(function (n) {
+        o.getPath().addListener(n, renderEditorState);
+      });
+    }
+    e.overlay = o;
+  }
+
+  function editorGeometry() {
+    var o = editor.overlay;
+    if (!o) return null;
+    if (editor.shape === 'circle') {
+      var c = o.getCenter();
+      return { centerLat: round6(c.lat()), centerLng: round6(c.lng()), radiusM: Math.round(o.getRadius()), polygon: '' };
+    }
+    var pts = o.getPath().getArray().map(function (ll) { return { lat: round6(ll.lat()), lng: round6(ll.lng()) }; });
+    var ctr = centroid(pts);
+    return {
+      centerLat: round6(ctr.lat),
+      centerLng: round6(ctr.lng),
+      radiusM: null,
+      polygon: JSON.stringify(pts.map(function (p) { return [p.lat, p.lng]; })),
+      vertices: pts.length
+    };
+  }
+
+  function saveEditor() {
+    var e = editor;
+    if (!e || e.saving) return;
+    var name = gq('name').value.trim();
+    var geo = editorGeometry();
+    if (!name) return editorError('Enter a name for the geofence.', gq('name'));
+    if (!geo) return editorError(e.shape === 'circle' ? 'Place the circle on the map.' : 'Draw the polygon on the map and close it (at least 3 vertices).');
+    if (e.shape === 'circle' && !(geo.radiusM >= 20 && geo.radiusM <= 50000)) return editorError('The radius must be between 20 m and 50 km.', gq('radius'));
+    if (geo.vertices > 100) return editorError('The polygon can have up to 100 vertices.');
+    var body = {
+      name: name,
+      shape: e.shape,
+      color: e.color,
+      enabled: gq('enabled').checked,
+      centerLat: geo.centerLat,
+      centerLng: geo.centerLng,
+      radiusM: geo.radiusM,
+      polygon: geo.polygon,
+      deviceIds: Array.from(e.deviceIds)
+    };
+    e.saving = true;
+    editorError('');
+    renderEditorState();
+    var req = e.id ?
+      api('PATCH', CONFIG.endpoints.geofence.replace(':geofenceId', encodeURIComponent(e.id)), body) :
+      api('POST', CONFIG.endpoints.geofences, body);
+    req.then(function () {
+      if (editor === e) closeEditor();
+      return loadGeofences();
+    }).catch(function (err) {
+      if (editor !== e) return;
+      e.saving = false;
+      renderEditorState();
+      editorError(apiErrorText(err, 'Could not save the geofence.'));
+    });
+  }
+
+  function deleteGeofence() {
+    var e = editor;
+    if (!e || !e.id || e.saving) return;
+    if (!confirm('Delete geofence "' + e.original.name + '"? It will be unassigned from all devices. Events already recorded are kept.')) return;
+    e.saving = true;
+    editorError('');
+    renderEditorState();
+    api('DELETE', CONFIG.endpoints.geofence.replace(':geofenceId', encodeURIComponent(e.id))).then(function () {
+      if (editor === e) closeEditor();
+      removeGeofence(e.id);
+      renderGeofenceList();
+      return loadGeofences();
+    }).catch(function (err) {
+      if (editor !== e) return;
+      e.saving = false;
+      renderEditorState();
+      editorError(apiErrorText(err, 'Could not delete the geofence.'));
+    });
+  }
+
+  function bindEditor() {
+    var panel = $('gfPanel');
+    panel.addEventListener('click', function (ev) {
+      var btn = ev.target.closest('[data-act]');
+      if (!btn || !editor) return;
+      switch (btn.dataset.act) {
+        case 'cancel':
+          closeEditor();
+          break;
+        case 'save':
+          saveEditor();
+          break;
+        case 'delete':
+          deleteGeofence();
+          break;
+        case 'shape':
+          if (btn.dataset.shape !== editor.shape) {
+            editor.shape = btn.dataset.shape;
+            startDraw();
+          }
+          break;
+        case 'undo':
+          undoVertex();
+          break;
+        case 'finish':
+          finishPolygon();
+          break;
+        case 'redraw':
+          startDraw();
+          break;
+        case 'zoom':
+          if (editor.overlay) gmap.fitBounds(overlayBounds(editor.overlay), fitPadding());
+          break;
+        case 'color':
+          setEditorColor(btn.dataset.color);
+          break;
+        case 'devAll':
+        case 'devNone':
+          gq('devs').querySelectorAll('[data-dev]').forEach(function (cb) {
+            cb.checked = btn.dataset.act === 'devAll';
+            if (cb.checked) editor.deviceIds.add(cb.dataset.dev);
+            else editor.deviceIds.delete(cb.dataset.dev);
+          });
+          renderDevCount();
+          break;
+      }
+    });
+    panel.addEventListener('input', function (ev) {
+      if (!editor) return;
+      var g = ev.target.dataset.g;
+      if (g === 'name') {
+        renderEditorState();
+      } else if (g === 'radius') {
+        var r = +ev.target.value;
+        if (r >= 20 && r <= 50000 && editor.overlay && editor.shape === 'circle') editor.overlay.setRadius(r);
+      } else if (g === 'devSearch') {
+        editor.devSearch = ev.target.value.trim().toLowerCase();
+        renderEditorDevices();
+      }
+    });
+    panel.addEventListener('change', function (ev) {
+      var id = ev.target.dataset.dev;
+      if (!editor || !id) return;
+      if (ev.target.checked) editor.deviceIds.add(id);
+      else editor.deviceIds.delete(id);
+      renderDevCount();
+    });
+    panel.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' && ev.target.dataset.g === 'name') saveEditor();
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pestañas del sidebar
+  // ---------------------------------------------------------------------------
+  function setTab(tab) {
+    state.tab = tab;
+    document.querySelectorAll('[data-tab]').forEach(function (b) {
+      b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false');
+    });
+    document.querySelectorAll('[data-view]').forEach(function (v) {
+      v.hidden = v.dataset.view !== tab;
+    });
+    if (tab === 'events') {
+      if (alarms.length) state.evSeen = Math.max(state.evSeen, alarms[0].time || 0);
+      renderAlarms();
+      loadAlarms();
+    } else if (tab === 'geofences') {
+      renderGeofenceList();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Polling
+  // ---------------------------------------------------------------------------
+  function showBanner(html) {
+    var b = $('banner');
+    b.innerHTML = html;
+    b.hidden = false;
+  }
+
+  function hideBanner() { $('banner').hidden = true; }
+
+  function setLive(kind) {
+    state.live = kind;
+    $('live').dataset.state = kind;
+    updateLiveText();
+  }
+
+  function updateLiveText() {
+    var prefix = CONFIG.demo ? 'Demo · ' : '';
+    var text = {
+      connecting: 'Connecting…',
+      live: 'Live · ' + rel(state.lastSync),
+      error: 'Reconnecting…',
+      paused: 'Paused'
+    }[state.live];
+    $('liveText').textContent = prefix + text;
+  }
+
+  function poll() {
+    clearTimeout(pollTimer);
+    if (state.paused) return;
+    var p = CONFIG.demo ? Promise.resolve(Demo.tick()) : getJSON(CONFIG.endpoints.fleet);
+    p.then(function (payload) {
+      state.errors = 0;
+      state.lastSync = Date.now();
+      hideBanner();
+      applyFleet(payload);
+      if (!state.paused) setLive('live');
+    }).catch(function (err) {
+      if (err.status === 401 || err.status === 403) {
+        location.href = '/login';
+        return;
+      }
+      state.errors++;
+      if (!state.paused) setLive('error');
+      if (err.status === 404) {
+        showBanner('Endpoint <code>' + esc(CONFIG.endpoints.fleet) + '</code> not found. Create the workflow or <a href="?demo=1">try demo mode</a>.');
+      } else {
+        showBanner('Could not update the fleet (' + (err.status ? 'HTTP ' + err.status : 'no connection') + '). Retrying…');
+      }
+      if (!state.loaded) {
+        state.loaded = true;
+        renderList();
+      }
+    }).then(function () {
+      if (state.paused) return;
+      var base = document.hidden ? CONFIG.hiddenPollMs : CONFIG.pollMs;
+      var delay = state.errors ? Math.min(base * Math.pow(2, state.errors), 60000) : base;
+      pollTimer = setTimeout(poll, delay);
+    });
+  }
+
+  function setPaused(on) {
+    state.paused = on;
+    var btn = $('pauseBtn');
+    btn.textContent = on ? 'Resume' : 'Pause';
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (on) {
+      clearTimeout(pollTimer);
+      setLive('paused');
+    } else {
+      setLive('connecting');
+      poll();
+    }
+  }
+
+  function tick() {
+    document.querySelectorAll('[data-ts]').forEach(function (el) {
+      var ts = +el.dataset.ts;
+      el.textContent = rel(ts || null);
+    });
+    if (state.live === 'live') updateLiveText();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Modo demo (?demo=1): simula una flota para probar la UI sin backend
+  // ---------------------------------------------------------------------------
+  var Demo = (function () {
+    var UNITS = [
+      ['Truck 01', 'North zone delivery', 'truck'],
+      ['Truck 02', 'South zone delivery', 'truck'],
+      ['Truck 03', 'West zone delivery', 'truck'],
+      ['Van 04', 'Field service', 'van'],
+      ['Van 05', 'Field service', 'van'],
+      ['Bike 06', 'Courier', 'moto'],
+      ['Bike 07', 'Courier', 'moto'],
+      ['Reefer 08', 'Cold chain', 'reefer'],
+      ['Reefer 09', 'Cold chain', 'reefer'],
+      ['Pickup 10', 'Supervision', 'pickup'],
+      ['Pickup 11', 'Supervision', 'pickup'],
+      ['Semi 12', 'Long haul', 'truck']
+    ];
+    var SPEEDUP = 5;
+    var RADIUS = 11000;
+    var devs = null;
+    var lastTick = 0;
+
+    function rnd(a, b) { return a + Math.random() * (b - a); }
+
+    function move(p, headingDeg, meters) {
+      var R = 6378137;
+      var br = toRad(headingDeg);
+      var dLat = meters * Math.cos(br) / R;
+      var dLng = meters * Math.sin(br) / (R * Math.cos(toRad(p.lat)));
+      return { lat: p.lat + dLat * 180 / Math.PI, lng: p.lng + dLng * 180 / Math.PI };
+    }
+
+    function steer(p, heading, jitter) {
+      var h = heading + rnd(-jitter, jitter);
+      if (haversine(CONFIG.defaultCenter, p) > RADIUS) {
+        var diff = ((bearing(p, CONFIG.defaultCenter) - h + 540) % 360) - 180;
+        h += diff * 0.4;
+      }
+      return (h + 360) % 360;
+    }
+
+    function init() {
+      devs = UNITS.map(function (u, i) {
+        var p = move(CONFIG.defaultCenter, rnd(0, 360), rnd(800, 9000));
+        return {
+          id: 'demo-' + String(i + 1).padStart(2, '0'),
+          name: u[0],
+          description: u[1],
+          type: u[2],
+          lat: p.lat,
+          lng: p.lng,
+          heading: rnd(0, 360),
+          speed: rnd(20, 45),
+          mode: i === 8 ? 'offline' : (i % 4 === 3 ? 'idle' : 'moving'),
+          battery: rnd(45, 100),
+          temp: u[2] === 'reefer' ? rnd(-18, -12) : rnd(18, 32),
+          offlineSince: Date.now() - rnd(25, 90) * 60000
+        };
+      });
+      lastTick = Date.now();
+    }
+
+    function toDevice(d) {
+      return {
+        id: d.id,
+        name: d.name,
+        description: d.description,
+        tags: [{ key: 'type', value: d.type }],
+        connected: d.mode !== 'offline',
+        lastUpdated: d.mode === 'offline' ? d.offlineSince : Date.now(),
+        attributes: {
+          location: d.lat.toFixed(6) + ',' + d.lng.toFixed(6),
+          speed: d.mode === 'moving' ? Math.round(d.speed) : 0,
+          heading: Math.round(d.heading),
+          battery: Math.round(d.battery),
+          temperature: Number(d.temp.toFixed(1))
+        }
+      };
+    }
+
+    function tick() {
+      if (!devs) init();
+      var now = Date.now();
+      var dt = Math.min((now - lastTick) / 1000, 30) * SPEEDUP;
+      lastTick = now;
+      devs.forEach(function (d) {
+        if (d.mode === 'offline') return;
+        if (d.mode === 'idle' && Math.random() < 0.06) d.mode = 'moving';
+        else if (d.mode === 'moving' && Math.random() < 0.015) d.mode = 'idle';
+        if (d.mode === 'moving') {
+          var maxV = d.type === 'moto' ? 70 : 60;
+          d.speed = clamp(d.speed + rnd(-6, 6), 15, maxV);
+          d.heading = steer(d, d.heading, 20);
+          var p = move(d, d.heading, d.speed / 3.6 * dt);
+          d.lat = p.lat;
+          d.lng = p.lng;
+        }
+        d.battery = Math.max(5, d.battery - rnd(0, 0.05));
+        d.temp += rnd(-0.2, 0.2);
+      });
+      var list = devs.map(toDevice);
+      DemoGeo.evaluate(list);
+      return {
+        organization: { name: 'Demo Logistics' },
+        devices: list
+      };
+    }
+
+    function history(id, minutes) {
+      if (!devs) init();
+      var d = devs.filter(function (x) { return x.id === id; })[0];
+      if (!d) return { points: [] };
+      var n = Math.min(Math.round(minutes * 2), 400);
+      var stepMs = minutes * 60000 / n;
+      var end = d.mode === 'offline' ? d.offlineSince : Date.now();
+      var p = { lat: d.lat, lng: d.lng };
+      var h = (d.heading + 180) % 360;
+      var pts = [];
+      for (var i = 0; i < n; i++) {
+        pts.push({ time: new Date(end - i * stepMs).toISOString(), data: { location: p.lat.toFixed(6) + ',' + p.lng.toFixed(6) } });
+        h = steer(p, h, 18);
+        if (i % 40 >= 6) p = move(p, h, rnd(60, 160));
+      }
+      return { points: pts };
+    }
+
+    return { tick: tick, history: history };
+  })();
+
+  // Backend simulado de geofences y alarmas: imita los endpoints y el workflow evaluador
+  var DemoGeo = (function () {
+    var rows = null;
+    var links = [];
+    var events = [];
+    var seq = 0;
+
+    function offset(p, northM, eastM) {
+      return { lat: p.lat + northM / 111320, lng: p.lng + eastM / (111320 * Math.cos(toRad(p.lat))) };
+    }
+
+    function seed() {
+      var c = CONFIG.defaultCenter;
+      var poly = [[-2500, 500], [-2000, 5000], [-6000, 5500], [-6500, 1000]].map(function (m) {
+        var q = offset(c, m[0], m[1]);
+        return [round6(q.lat), round6(q.lng)];
+      });
+      var pc = centroid(poly.map(function (q) { return { lat: q[0], lng: q[1] }; }));
+      rows = [
+        { id: 'gf-1', name: 'Downtown', shape: 'circle', centerLat: c.lat, centerLng: c.lng, radiusM: 3000, polygon: '', color: GF_COLORS[0], enabled: true },
+        { id: 'gf-2', name: 'South zone', shape: 'polygon', centerLat: pc.lat, centerLng: pc.lng, radiusM: null, polygon: JSON.stringify(poly), color: GF_COLORS[4], enabled: true }
+      ];
+      seq = 2;
+      for (var i = 1; i <= 12; i++) {
+        var id = 'demo-' + String(i).padStart(2, '0');
+        links.push({ geofenceId: 'gf-1', deviceId: id, state: 'unknown', changedAt: null });
+        if (i % 2 === 0) links.push({ geofenceId: 'gf-2', deviceId: id, state: 'unknown', changedAt: null });
+      }
+    }
+
+    function addEvent(type, dev, g, loc, time) {
+      events.unshift({
+        id: 'ev-' + (++seq),
+        type: type,
+        severity: 'info',
+        deviceId: dev.id,
+        deviceName: dev.name,
+        refId: g.id,
+        refName: g.name,
+        message: dev.name + (type === 'geofence.enter' ? ' entered ' : ' exited ') + g.name,
+        location: loc,
+        eventTime: time
+      });
+      if (events.length > 300) events.length = 300;
+    }
+
+    // equivalente al workflow "Geofences - Evaluador"
+    function evaluate(devices) {
+      if (!rows) seed();
+      var now = Date.now();
+      var byId = {};
+      rows.forEach(function (r) { byId[r.id] = r; });
+      if (!events.length) {
+        // un poco de historial para que la pestaña no arranque vacía
+        devices.slice(0, 4).forEach(function (d, i) {
+          var g = byId[i % 2 ? 'gf-2' : 'gf-1'];
+          addEvent(i % 3 ? 'geofence.exit' : 'geofence.enter', d, g, g.centerLat + ',' + g.centerLng, now - (40 - i * 9) * 60000);
+        });
+      }
+      devices.forEach(function (d) {
+        var p = parseLocation(d.attributes.location);
+        if (!p || d.connected === false) return;
+        links.forEach(function (l) {
+          if (l.deviceId !== d.id) return;
+          var raw = byId[l.geofenceId];
+          var g = raw && normalizeGeofence(raw);
+          if (!g) return;
+          if (!g.enabled) {
+            l.state = 'unknown';
+            return;
+          }
+          var next = gfNextState(g, p, l.state);
+          if (next === l.state) return;
+          var prev = l.state;
+          l.state = next;
+          l.changedAt = now;
+          if (prev !== 'unknown') addEvent(next === 'inside' ? 'geofence.enter' : 'geofence.exit', d, g, d.attributes.location, now);
+        });
+      });
+    }
+
+    function fail(status, msg) {
+      var err = new Error(msg);
+      err.status = status;
+      throw err;
+    }
+
+    function toRow(b) {
+      var name = String(b.name || '').trim().slice(0, 60);
+      if (!name) fail(400, 'Name is required.');
+      return {
+        name: name,
+        shape: b.shape === 'polygon' ? 'polygon' : 'circle',
+        centerLat: +b.centerLat,
+        centerLng: +b.centerLng,
+        radiusM: b.radiusM == null ? null : +b.radiusM,
+        polygon: b.polygon || '',
+        color: safeColor(b.color),
+        enabled: b.enabled !== false
+      };
+    }
+
+    // como el workflow: al guardar se recrean las asignaciones (estado "unknown")
+    function setLinks(id, deviceIds) {
+      links = links.filter(function (l) { return l.geofenceId !== id; });
+      (deviceIds || []).forEach(function (did) {
+        links.push({ geofenceId: id, deviceId: String(did), state: 'unknown', changedAt: null });
+      });
+    }
+
+    function listPayload() {
+      return {
+        geofences: rows.map(function (r) {
+          var out = Object.assign({}, r);
+          out.devices = links.filter(function (l) { return l.geofenceId === r.id; }).map(function (l) {
+            return { deviceId: l.deviceId, state: l.state, stateChangedAt: l.changedAt };
+          });
+          return out;
+        })
+      };
+    }
+
+    function route(method, url, body) {
+      var u = new URL(url, location.href);
+      var path = u.pathname;
+      if (path === CONFIG.endpoints.alarms && method === 'GET') {
+        var type = u.searchParams.get('type');
+        var limit = +u.searchParams.get('limit') || 100;
+        return { items: events.filter(function (ev) { return !type || ev.type === type; }).slice(0, limit) };
+      }
+      if (path === CONFIG.endpoints.geofences) {
+        if (method === 'GET') return listPayload();
+        if (method === 'POST') {
+          var created = toRow(body || {});
+          created.id = 'gf-' + (++seq);
+          rows.push(created);
+          setLinks(created.id, body.deviceIds);
+          return { geofence: created };
+        }
+      }
+      var prefix = CONFIG.endpoints.geofences + '/';
+      if (path.indexOf(prefix) === 0) {
+        var id = decodeURIComponent(path.slice(prefix.length));
+        var row = rows.filter(function (r) { return r.id === id; })[0];
+        if (!row) fail(404, 'Geofence not found.');
+        if (method === 'PATCH') {
+          Object.assign(row, toRow(body || {}));
+          setLinks(id, body.deviceIds);
+          return { geofence: row };
+        }
+        if (method === 'DELETE') {
+          rows = rows.filter(function (r) { return r !== row; });
+          links = links.filter(function (l) { return l.geofenceId !== id; });
+          return { ok: true };
+        }
+      }
+      fail(404, 'HTTP 404');
+    }
+
+    function handle(method, url, body) {
+      if (!rows) seed();
+      return new Promise(function (resolve, reject) {
+        setTimeout(function () {
+          try {
+            resolve(JSON.parse(JSON.stringify(route(method, url, body))));
+          } catch (err) {
+            reject(err);
+          }
+        }, 150);
+      });
+    }
+
+    return { evaluate: evaluate, handle: handle };
+  })();
+
+  // ---------------------------------------------------------------------------
+  // Eventos de UI
+  // ---------------------------------------------------------------------------
+  function toggleSidebar(open) {
+    root.classList.toggle('sidebar-open', open);
+  }
+
+  function bindUI() {
+    document.querySelectorAll('[data-filter]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        state.filter = btn.dataset.filter;
+        document.querySelectorAll('[data-filter]').forEach(function (b) {
+          b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+        });
+        renderAll();
+      });
+    });
+
+    $('search').addEventListener('input', function (ev) {
+      state.search = ev.target.value.trim().toLowerCase();
+      renderAll();
+    });
+
+    $('sort').addEventListener('change', function (ev) {
+      state.sort = ev.target.value;
+      renderList();
+    });
+
+    var list = $('deviceList');
+    list.addEventListener('click', function (ev) {
+      var li = ev.target.closest('.dv');
+      if (li) select(li.dataset.id);
+    });
+    list.addEventListener('keydown', function (ev) {
+      var li = ev.target.closest('.dv');
+      if (!li) return;
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        select(li.dataset.id);
+      } else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        var next = ev.key === 'ArrowDown' ? li.nextElementSibling : li.previousElementSibling;
+        if (next) next.focus();
+      }
+    });
+
+    var detail = $('detail');
+    detail.addEventListener('click', function (ev) {
+      var chip = ev.target.closest('[data-gf]');
+      if (chip) {
+        openEditor(chip.dataset.gf);
+        return;
+      }
+      var btn = ev.target.closest('[data-act]');
+      if (!btn || btn.tagName === 'SELECT' || btn.tagName === 'INPUT') return;
+      var e = fleet.get(state.selectedId);
+      switch (btn.dataset.act) {
+        case 'play':
+          if (replay.playing) replayPause();
+          else replayPlay();
+          break;
+        case 'rpstop':
+          replayStop();
+          break;
+        case 'close':
+          deselect();
+          break;
+        case 'follow':
+          setFollow(!state.follow);
+          break;
+        case 'center':
+          if (e && e.pos && mapsReady) {
+            gmap.panTo(e.pos);
+            gmap.setZoom(Math.max(gmap.getZoom(), 16));
+          }
+          break;
+        case 'copy':
+          if (e && e.d.loc && navigator.clipboard) {
+            navigator.clipboard.writeText(e.d.loc.lat.toFixed(6) + ',' + e.d.loc.lng.toFixed(6)).then(function () {
+              btn.textContent = 'Copied';
+              setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+            });
+          }
+          break;
+      }
+    });
+    detail.addEventListener('change', function (ev) {
+      var act = ev.target.dataset.act;
+      if (act === 'range') {
+        state.historyMinutes = +ev.target.value;
+        if (state.selectedId) loadHistory(state.selectedId);
+      } else if (act === 'rpspeed') {
+        replay.speed = +ev.target.value;
+      }
+    });
+    detail.addEventListener('input', function (ev) {
+      if (ev.target.dataset.act === 'scrub') replaySeek(+ev.target.value / 1000);
+    });
+
+    $('pauseBtn').addEventListener('click', function () { setPaused(!state.paused); });
+
+    $('fitBtn').addEventListener('click', function () {
+      setFollow(false);
+      fitAll();
+    });
+
+    $('trailsBtn').addEventListener('click', function () {
+      state.trails = !state.trails;
+      this.setAttribute('aria-pressed', state.trails ? 'true' : 'false');
+      fleet.forEach(syncMarker);
+    });
+
+    document.querySelectorAll('[data-tab]').forEach(function (btn) {
+      btn.addEventListener('click', function () { setTab(btn.dataset.tab); });
+    });
+
+    $('gfSearch').addEventListener('input', function (ev) {
+      state.gfSearch = ev.target.value.trim().toLowerCase();
+      renderGeofenceList();
+    });
+
+    $('gfNew').addEventListener('click', function () { openEditor(null); });
+
+    var gfList = $('gfList');
+    gfList.addEventListener('click', function (ev) {
+      var li = ev.target.closest('.gf');
+      if (li) openEditor(li.dataset.id);
+    });
+    gfList.addEventListener('keydown', function (ev) {
+      var li = ev.target.closest('.gf');
+      if (li && (ev.key === 'Enter' || ev.key === ' ')) {
+        ev.preventDefault();
+        openEditor(li.dataset.id);
+      }
+    });
+
+    $('evFilter').addEventListener('change', function (ev) {
+      state.evFilter = ev.target.value;
+      alarms = [];
+      alarmStatus.loaded = false;
+      renderAlarms();
+      loadAlarms();
+    });
+
+    $('evRefresh').addEventListener('click', function () { loadAlarms(); });
+
+    var evList = $('evList');
+    evList.addEventListener('click', function (ev) {
+      var li = ev.target.closest('.ev');
+      if (li) focusAlarm(alarms[+li.dataset.i]);
+    });
+    evList.addEventListener('keydown', function (ev) {
+      var li = ev.target.closest('.ev');
+      if (li && (ev.key === 'Enter' || ev.key === ' ')) {
+        ev.preventDefault();
+        focusAlarm(alarms[+li.dataset.i]);
+      }
+    });
+
+    $('gfBtn').addEventListener('click', function () {
+      state.gfLayer = !state.gfLayer;
+      this.setAttribute('aria-pressed', state.gfLayer ? 'true' : 'false');
+      geofences.forEach(syncGeofenceShape);
+    });
+
+    bindEditor();
+
+    $('typeBtn').addEventListener('click', function () {
+      if (!mapsReady) return;
+      var sat = gmap.getMapTypeId() !== 'hybrid';
+      gmap.setMapTypeId(sat ? 'hybrid' : 'roadmap');
+      this.setAttribute('aria-pressed', sat ? 'true' : 'false');
+    });
+
+    $('sidebarOpen').addEventListener('click', function () { toggleSidebar(true); });
+    $('sidebarClose').addEventListener('click', function () { toggleSidebar(false); });
+    $('backdrop').addEventListener('click', function () { toggleSidebar(false); });
+
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Escape') return;
+      if (root.classList.contains('sidebar-open')) toggleSidebar(false);
+      else if (editor && editor.mode === 'draw' && editor.draft.length) undoVertex();
+      else if (editor && $('gfPanel').contains(document.activeElement) && document.activeElement.matches('input')) document.activeElement.blur();
+      else if (editor) closeEditor();
+      else if (state.selectedId) deselect();
+    });
+
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && !state.paused) poll();
+    });
+
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      readColors();
+      fleet.forEach(syncMarker);
+      if (historyLine) historyLine.setOptions({ strokeColor: colors.accent });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Inicio
+  // ---------------------------------------------------------------------------
+  function bootstrapDevices() {
+    var el = $('fleetBoot');
+    var text = el ? el.textContent.trim() : '';
+    if (!text || CONFIG.demo) return;
+    try {
+      applyFleet(JSON.parse(text));
+    } catch (err) {
+      console.warn('[fleet] invalid pageData.devices', err);
+    }
+  }
+
+  readColors();
+  setOrg(root.dataset.org);
+  bindUI();
+  bootstrapDevices();
+  renderList();
+  requestAnimationFrame(frame);
+  setInterval(tick, 1000);
+  poll();
+  loadGeofences();
+  loadAlarms();
+  setInterval(function () {
+    if (!document.hidden && !state.paused && !editor) loadGeofences();
+  }, CONFIG.geofencePollMs);
+  setInterval(function () {
+    if (!document.hidden && !state.paused) loadAlarms();
+  }, CONFIG.alarmsPollMs);
+
+  loadGoogleMaps().then(initMap).catch(function (err) {
+    if (err && err.message === 'missing-key') {
+      showMapMsg('Google Maps API key is missing', 'The page workflow must send pageData.googleMapsApiKey (Application Global GOOGLE_MAPS_API_KEY).');
+    } else {
+      showMapMsg('Could not load Google Maps', 'Check your connection and the API key configuration.');
+      console.error('[fleet] Google Maps', err);
+    }
+  });
+})();
+</script>
