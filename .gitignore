@@ -3,9 +3,6 @@
 .env.*
 !.env.example
 
-# Local working notes, not deployed to Losant
-losant-workflows/
-
 # Dependencies and OS files
 node_modules/
 .DS_Store
