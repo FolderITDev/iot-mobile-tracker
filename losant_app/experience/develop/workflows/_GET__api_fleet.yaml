@@ -1,0 +1,92 @@
+resourceType: ExperienceFlowVersion
+resources:
+  - description: ' dispositivos de la organización (autenticado)'
+    enabled: true
+    exportHash: ee8a2fb811cbac0ecc4c2aa647a69aecd8d7ad5fa50628a3bc4f93684b14aa39
+    flowId: ~exportplaceholderid-flow-getApiFleet~
+    globals: []
+    id: ~exportplaceholderid-flowVersion-getApiFleet~
+    name: ' GET /api/fleet'
+    nodes:
+      - config:
+          attributes:
+            - location
+            - speed
+            - course
+            - batteryLevel
+          attributesAsObject: false
+          findMetadata: false
+          findMethod: experienceUserIdOrEmail
+          findMultiple: true
+          idTemplate: '{{experience.user.id}}'
+          includeConnectionStatus: true
+          includeState: true
+          resultPath: working.devices
+          resultsPage: ''
+          resultsPerPage: ''
+          sortDirection: asc
+          sortField: name
+          tagsAsObject: false
+        id: vKbokMi70m
+        meta:
+          category: data
+          description: ''
+          label: 'Device: Get'
+          name: get-device
+          x: 80
+          'y': 140
+        outputIds:
+          - - OllL0N9BEW
+        type: GetDeviceNode
+      - config:
+          bodyTemplate: '{ "devices": {{jsonEncode working.devices}} }'
+          bodyTemplateType: string
+          cookieInfo: []
+          headerInfo: []
+          mqttTopicsTemplate: []
+          replyIdPath: ''
+          replyType: custom
+          responseCodeTemplate: '200'
+          sameSiteTemplate: ''
+        id: OllL0N9BEW
+        meta:
+          category: output
+          description: ''
+          label: 'Endpoint: Reply'
+          mqttTopicsType: []
+          name: endpoint-reply
+          x: 80
+          'y': 240
+        outputIds:
+          - - okoNKTngL_
+        type: EndpointReplyNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: okoNKTngL_
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 80
+          'y': 340
+        outputIds: []
+        type: DebugNode
+    triggers:
+      - config: {}
+        key: ~exportplaceholderid-experienceEndpoint-getApiFleet~
+        meta:
+          category: trigger
+          description: ''
+          label: Endpoint
+          name: endpoint
+          uiId: oLiiJIBc1J
+          x: 80
+          'y': 40
+        outputIds:
+          - - vKbokMi70m
+        type: endpoint
+    version: develop
+version: 1

@@ -1,0 +1,72 @@
+resourceType: DataTable
+resources:
+  - columns:
+      - constraint: required
+        dataType: string
+        name: organizationId
+      - constraint: required
+        dataType: string
+        name: deviceId
+      - constraint: optional
+        dataType: string
+        name: deviceName
+      - constraint: required
+        dataType: string
+        name: type
+      - constraint: required
+        dataType: string
+        name: severity
+      - constraint: optional
+        dataType: string
+        name: refId
+      - constraint: optional
+        dataType: string
+        name: refName
+      - constraint: required
+        dataType: string
+        name: message
+      - constraint: optional
+        dataType: string
+        name: location
+      - constraint: optional
+        dataType: string
+        name: data
+      - constraint: required
+        dataType: number
+        name: eventTime
+    description: >-
+      Generic alarm/event log shared by all alarm types (geofence enter/exit
+      today, others in the future). One row per event. 
+
+      Columns: 
+
+      organizationId (String, required) - tenant, Experience Group ID. 
+
+      deviceId (String, required) - Losant device ID. 
+
+      deviceName (String, optional) - device name at the time of the event. 
+
+      type (String, required) - event type in "domain.event" format, e.g.
+      "geofence.enter", "geofence.exit". severity (String, required) - "info",
+      "warning" or "critical". 
+
+      refId (String, optional) - ID of the object that triggered the event (e.g.
+      geofence id). 
+
+      refName (String, optional) - name of that object at the time of the
+      event. 
+
+      message (String, required) - human-readable text shown in the UI. 
+
+      location (String, optional) - device position "lat,lng" when the event
+      happened. 
+
+      eventTime (Number, required) - epoch milliseconds of the device message
+      (not the processing time).
+
+      data (String, optional) - JSON with type-specific details.
+    exportHash: b4e7490f745e2897eac6a7b51a36ac4fb66ad4d8d548b9f624fe7f3c24e8d96d
+    id: ~exportplaceholderid-dataTable-alarmEvents~
+    name: alarm_events
+sequenceNumber: 2
+version: 1

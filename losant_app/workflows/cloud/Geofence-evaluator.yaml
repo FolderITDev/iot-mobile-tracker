@@ -1,0 +1,525 @@
+resourceType: Flow
+resources:
+  - exportHash: 0859bed527891382b5fd8ea141ad290e9a7b0acadf60dea55c95057fb62d6b63
+    flowClass: cloud
+    globals: []
+    id: ~exportplaceholderid-flow-geofenceEvaluator~
+    name: Geofence-evaluator
+    nodes:
+      - config:
+          expression: '{{data.location}}'
+        id: McNmLGbHEm
+        meta:
+          category: logic
+          description: ''
+          label: Conditional
+          name: conditional
+          x: 160
+          'y': 160
+        outputIds:
+          - - VwM9Oz2ELF
+          - - tfHc8RtKPO
+        type: ConditionalNode
+      - config:
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofenceDevices~
+          includeFieldsTemplate: ''
+          limitTemplate: ''
+          offsetTemplate: ''
+          queryTemplate: |-
+            {
+              "$and": [
+                {
+                  "deviceId": {
+                    "$eq": "{{device.deviceId}}"
+                  }
+                }
+              ]
+            }
+          resultPath: working.assignments
+          sortColumnTemplate: ''
+          sortDirectionTemplate: ''
+        id: tfHc8RtKPO
+        meta:
+          category: data
+          description: ''
+          label: 'Table: Get Rows'
+          name: get-table-rows
+          x: 300
+          'y': 280
+        outputIds:
+          - - TGQ8ArlyQp
+        type: DataTableQueryNode
+      - config:
+          expression: '{{working.assignments.items.length}} > 0'
+        id: TGQ8ArlyQp
+        meta:
+          category: logic
+          description: ''
+          label: Conditional
+          name: conditional
+          x: 300
+          'y': 380
+        outputIds:
+          - - hwH7rZalCU
+          - - AFgMai5uFh
+        type: ConditionalNode
+      - config:
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofences~
+          includeFieldsTemplate: ''
+          limitTemplate: ''
+          offsetTemplate: ''
+          queryTemplate: |-
+            {
+              "$and": [
+                {
+                  "organizationId": {
+                    "$eq": "{{deviceTags.organizationId.[0]}}"
+                  }
+                }
+              ]
+            }
+          resultPath: working.geofences
+          sortColumnTemplate: ''
+          sortDirectionTemplate: ''
+        id: AFgMai5uFh
+        meta:
+          category: data
+          description: ''
+          label: 'Table: Get Rows'
+          name: get-table-rows
+          x: 400
+          'y': 500
+        outputIds:
+          - - dRQEsRjnrM
+        type: DataTableQueryNode
+      - config:
+          scopePath: ''
+          script: >
+            /*
+             * Function node "Evaluate geofences"
+             * Workflow: Geofences - Evaluator (application workflow, Device: State trigger)
+             *
+             * Input (payload):
+             *   data.location           "lat,lng" from the received state
+             *   time                    state timestamp
+             *   deviceId, deviceName    from the trigger
+             *   working.assignments     Table: Get Rows on geofence_devices (deviceId = this device)
+             *   working.geofences       Table: Get Rows on geofences (organizationId = device's org)
+             *
+             * Output:
+             *   working.updates   [{ rowId, state, stateChangedAt }]  -> Table: Update Row on geofence_devices
+             *   working.events    complete rows for alarm_events      -> Table: Insert Row
+             *   stateChangedAt and eventTime are epoch milliseconds (Data Tables have no date type)
+             *   working.hasUpdates / working.hasEvents  (booleans for the Conditional nodes)
+             *
+             * The geometry matches the UI (experience/pages/Fleet Map.hbs:
+             * gfOutside / gfNextState). If you change one, change the other.
+             */
+
+            var HYSTERESIS_M = 20; // to exit, the device must move this far
+            past the edge (avoids GPS jitter)
+
+
+            function toRad(d) { return d * Math.PI / 180; }
+
+
+            function haversine(a, b) {
+              var dLat = toRad(b.lat - a.lat);
+              var dLng = toRad(b.lng - a.lng);
+              var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+              return 2 * 6371000 * Math.asin(Math.sqrt(h));
+            }
+
+
+            // epoch ms from a number, numeric string, Date or ISO string
+
+            function toMs(v) {
+              if (v == null || v === '') return null;
+              if (typeof v === 'number') return v;
+              if (/^\d+$/.test(String(v))) return Number(v);
+              var t = new Date(v).getTime();
+              return isFinite(t) ? t : null;
+            }
+
+
+            function toLatLng(lat, lng) {
+              lat = parseFloat(lat);
+              lng = parseFloat(lng);
+              if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+              return { lat: lat, lng: lng };
+            }
+
+
+            function parseLocation(v) {
+              if (v == null) return null;
+              if (typeof v === 'string') {
+                var p = v.split(',');
+                return p.length < 2 ? null : toLatLng(p[0], p[1]);
+              }
+              if (Array.isArray(v)) return toLatLng(v[0], v[1]);
+              if (typeof v === 'object') return toLatLng(v.lat != null ? v.lat : v.latitude, v.lng != null ? v.lng : v.longitude);
+              return null;
+            }
+
+
+            function rowsOf(x) {
+              if (!x) return [];
+              if (Array.isArray(x)) return x;
+              return x.items || x.rows || [];
+            }
+
+
+            function normalize(raw) {
+              var shape = raw.shape === 'polygon' ? 'polygon' : 'circle';
+              var g = { shape: shape, center: toLatLng(raw.centerLat, raw.centerLng), radiusM: parseFloat(raw.radiusM) || 0, polygon: [] };
+              if (shape === 'polygon') {
+                var pts = raw.polygon;
+                if (typeof pts === 'string') {
+                  try { pts = JSON.parse(pts); } catch (e) { pts = []; }
+                }
+                g.polygon = (Array.isArray(pts) ? pts : []).map(parseLocation).filter(Boolean);
+                return g.polygon.length >= 3 ? g : null;
+              }
+              return g.center && g.radiusM > 0 ? g : null;
+            }
+
+
+            function localXY(origin, p) {
+              return {
+                x: toRad(p.lng - origin.lng) * 6371000 * Math.cos(toRad(origin.lat)),
+                y: toRad(p.lat - origin.lat) * 6371000
+              };
+            }
+
+
+            function originToSegment(a, b) {
+              var dx = b.x - a.x;
+              var dy = b.y - a.y;
+              var len2 = dx * dx + dy * dy;
+              var t = len2 ? Math.max(0, Math.min(1, -(a.x * dx + a.y * dy) / len2)) : 0;
+              return Math.sqrt(Math.pow(a.x + t * dx, 2) + Math.pow(a.y + t * dy, 2));
+            }
+
+
+            // distance in meters to the edge: negative inside, positive outside
+
+            function outside(g, p) {
+              if (g.shape === 'circle') return haversine(g.center, p) - g.radiusM;
+              var pts = g.polygon.map(function (q) { return localXY(p, q); });
+              var inside = false;
+              var edge = Infinity;
+              for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+                var a = pts[i];
+                var b = pts[j];
+                if ((a.y > 0) !== (b.y > 0) && (b.x - a.x) * -a.y / (b.y - a.y) + a.x > 0) inside = !inside;
+                edge = Math.min(edge, originToSegment(a, b));
+              }
+              return inside ? -edge : edge;
+            }
+
+
+            function nextState(g, p, prev) {
+              var out = outside(g, p);
+              if (out <= 0) return 'inside';
+              return prev === 'inside' && out <= HYSTERESIS_M ? 'inside' : 'outside';
+            }
+
+
+            var working = payload.working = payload.working || {};
+
+            var point = parseLocation(payload.data && payload.data.location);
+
+            var timeMs = toMs(payload.time) || Date.now();
+
+            var updates = [];
+
+            var events = [];
+
+
+            if (point) {
+              var byId = {};
+              rowsOf(working.geofences).forEach(function (g) { byId[String(g.id)] = g; });
+
+              rowsOf(working.assignments).forEach(function (a) {
+                var raw = byId[String(a.geofenceId)];
+                if (!raw) return; // geofence deleted or from another organization
+                var prev = a.state || 'unknown';
+
+                // disabled: forget the state so re-enabling it does not produce a false event
+                if (raw.enabled === false || raw.enabled === 'false') {
+                  if (prev !== 'unknown') updates.push({ rowId: a.id, state: 'unknown', stateChangedAt: timeMs });
+                  return;
+                }
+
+                // old message that arrived out of order
+                if (toMs(a.stateChangedAt) > timeMs) return;
+
+                var g = normalize(raw);
+                if (!g) return;
+                var next = nextState(g, point, prev);
+                if (next === prev) return;
+
+                updates.push({ rowId: a.id, state: next, stateChangedAt: timeMs });
+                if (prev === 'unknown') return; // first evaluation: store the state without logging an event
+
+                var entered = next === 'inside';
+                events.push({
+                  organizationId: raw.organizationId || a.organizationId,
+                  deviceId: payload.device.deviceId,
+                  deviceName: payload.device.name || payload.device.deviceId,
+                  type: entered ? 'geofence.enter' : 'geofence.exit',
+                  severity: 'info',
+                  refId: String(raw.id),
+                  refName: raw.name,
+                  message: (payload.device.name || payload.device.deviceId) + (entered ? ' entered ' : ' exited ') + raw.name,
+                  location: point.lat + ',' + point.lng,
+                  eventTime: timeMs,
+                  data: JSON.stringify({ shape: g.shape, distanceM: Math.round(outside(g, point)) })
+                });
+              });
+            }
+
+
+            working.updates = updates;
+
+            working.events = events;
+
+            working.hasUpdates = updates.length > 0;
+
+            working.hasEvents = events.length > 0;
+        id: dRQEsRjnrM
+        meta:
+          category: logic
+          description: ''
+          label: Function
+          name: function
+          x: 400
+          'y': 600
+        outputIds:
+          - - GprxMxUF2W
+        type: RawFunctionNode
+      - config:
+          expression: '{{working.hasUpdates}}'
+        id: GprxMxUF2W
+        meta:
+          category: logic
+          description: ''
+          label: Conditional
+          name: conditional
+          x: 400
+          'y': 700
+        outputIds:
+          - - FJNTMItyM0
+          - - 9PT5sa9S4h
+        type: ConditionalNode
+      - config:
+          currentItemPath: working.item
+          loopSourcePath: working.updates
+          mapResultPath: ''
+          parallel: false
+        id: 9PT5sa9S4h
+        meta:
+          category: logic
+          description: ''
+          groupStartX: 260
+          groupStartY: 200
+          label: Loop
+          name: loop
+          x: 520
+          'y': 820
+        outputIds:
+          - - u9ncN2wkjp
+          - - nycrsI67SI
+        type: LoopNode
+      - config:
+          loopNodeId: 9PT5sa9S4h
+          mapValuePath: ''
+          shouldBreak: false
+        id: JGEHPvmRi0
+        meta:
+          category: loop
+          description: ''
+          groupId: 9PT5sa9S4h
+          label: Next
+          name: loop-next
+          x: 260
+          'y': 400
+        outputIds: []
+        type: LoopCapNode
+      - config:
+          dataMethod: individualFields
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-geofenceDevices~
+          resultPath: ''
+          rowFields:
+            - columnTemplate: state
+              valueTemplate: '{{working.item.value.state}}'
+            - columnTemplate: stateChangedAt
+              valueTemplate: '{{working.item.value.stateChangedAt}}'
+          rowIdTemplate: '{{working.item.value.rowId}}'
+          rowSelectType: id
+        id: nycrsI67SI
+        meta:
+          category: data
+          description: ''
+          groupId: 9PT5sa9S4h
+          label: 'Table: Update Row'
+          name: update-table-row
+          x: 260
+          'y': 300
+        outputIds:
+          - - JGEHPvmRi0
+        type: DataTableUpdateRowNode
+      - config:
+          expression: '{{working.hasEvents}}'
+        id: u9ncN2wkjp
+        meta:
+          category: logic
+          description: ''
+          label: Conditional
+          name: conditional
+          x: 520
+          'y': 920
+        outputIds:
+          - - I1I0KmEp5z
+          - - baaRf5tNyc
+        type: ConditionalNode
+      - config:
+          currentItemPath: working.event
+          loopSourcePath: working.events
+          mapResultPath: ''
+          parallel: false
+        id: baaRf5tNyc
+        meta:
+          category: logic
+          description: ''
+          groupStartX: 260
+          groupStartY: 200
+          label: Loop
+          name: loop
+          x: 600
+          'y': 1040
+        outputIds:
+          - - E_yXYVkC_e
+          - - nu4_6DICHQ
+        type: LoopNode
+      - config:
+          loopNodeId: baaRf5tNyc
+          mapValuePath: ''
+          shouldBreak: false
+        id: gl1I5YBdXE
+        meta:
+          category: loop
+          description: ''
+          groupId: baaRf5tNyc
+          label: Next
+          name: loop-next
+          x: 260
+          'y': 400
+        outputIds: []
+        type: LoopCapNode
+      - config:
+          dataMethod: payloadPath
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-alarmEvents~
+          resultPath: working.create_result
+          rowPayloadPath: working.event.value
+        id: nu4_6DICHQ
+        meta:
+          category: data
+          description: ''
+          groupId: baaRf5tNyc
+          label: 'Table: Insert Rows'
+          name: insert-table-row
+          x: 260
+          'y': 300
+        outputIds:
+          - - gl1I5YBdXE
+        type: DataTableInsertRowNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: E_yXYVkC_e
+        meta:
+          category: debug
+          description: ''
+          label: Geof event created
+          name: debug
+          x: 600
+          'y': 1180
+        outputIds: []
+        type: DebugNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: I1I0KmEp5z
+        meta:
+          category: debug
+          description: ''
+          label: No events
+          name: debug
+          x: 400
+          'y': 1040
+        outputIds: []
+        type: DebugNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: FJNTMItyM0
+        meta:
+          category: debug
+          description: ''
+          label: No updates
+          name: debug
+          x: 320
+          'y': 820
+        outputIds: []
+        type: DebugNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: hwH7rZalCU
+        meta:
+          category: debug
+          description: ''
+          label: No geofences
+          name: debug
+          x: 180
+          'y': 500
+        outputIds: []
+        type: DebugNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: VwM9Oz2ELF
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 80
+          'y': 280
+        outputIds: []
+        type: DebugNode
+    triggers:
+      - config:
+          attributeWhitelist:
+            - location
+          triggerOn: individual
+        key: source/
+        meta:
+          category: trigger
+          description: ''
+          label: 'Device: State'
+          name: deviceIdsTags
+          uiId: FptBCaVdHY
+          x: 160
+          'y': 60
+        outputIds:
+          - - McNmLGbHEm
+        type: deviceTag
+version: 1

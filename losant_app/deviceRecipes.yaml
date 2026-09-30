@@ -1,0 +1,42 @@
+resourceType: DeviceRecipe
+resources:
+  - attributes:
+      - attributeTags: {}
+        dataType: gps
+        description: device location
+        name: location
+      - attributeTags: {}
+        dataType: number
+        description: device speed in kmh
+        name: speed
+      - attributeTags: {}
+        dataType: number
+        description: Heading in degrees (0-360) where 0 is true north
+        name: course
+      - attributeTags: {}
+        dataType: number
+        description: Altitude above sea level in meters
+        name: altitude
+      - attributeTags: {}
+        dataType: string
+        description: 'Current connection status such as `online`, `offline`, or `unknown`'
+        name: status
+      - attributeTags: {}
+        dataType: number
+        description: Identifier of the last known position
+        name: lastPositionId
+      - attributeTags: {}
+        dataType: number
+        description: Battery Level at mobile
+        name: batteryLevel
+    deviceClass: standalone
+    deviceName: Traccar device
+    exportHash: d5b4342f89f5c89854268ec84ac21fd56cd298667c9fca99f8d3baa300a2c8d5
+    id: ~exportplaceholderid-deviceRecipe-traccarDevice~
+    name: Traccar device
+    tags:
+      - key: source
+        value: traccar
+      - key: traccarId
+        value: <traccar-device-id>
+version: 1

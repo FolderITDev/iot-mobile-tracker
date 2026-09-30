@@ -1,0 +1,58 @@
+resourceType: DataTable
+resources:
+  - columns:
+      - constraint: required
+        dataType: string
+        name: organizationId
+      - constraint: required
+        dataType: string
+        name: name
+      - constraint: required
+        dataType: string
+        name: shape
+      - constraint: required
+        dataType: number
+        name: centerLat
+      - constraint: optional
+        dataType: number
+        name: radiusM
+      - constraint: optional
+        dataType: string
+        name: polygon
+      - constraint: optional
+        dataType: string
+        name: color
+      - constraint: optional
+        dataType: boolean
+        defaultValue: true
+        name: enabled
+      - constraint: required
+        dataType: number
+        name: centerLng
+    description: >-
+      Geofence configuration (one row per geofence). 
+
+      Columns: 
+
+      organizationId (String, required) - tenant, Experience Group ID. 
+
+      name (String, required) - display name
+
+      shape (String, required) - "circle" or "polygon". 
+
+      centerLat / centerLng (Number, required) - circle center; for polygons,
+      the centroid (used for the map label). 
+
+      radiusM (Number, optional) - circle radius in meters, 0 for polygons. 
+
+      polygon (String, optional) - JSON array of [lat,lng] vertices (3-100),
+      empty for circles. 
+
+      color (String, optional) - hex color "#rrggbb". 
+
+      enabled (Boolean, required, default true) - when false, no enter/exit
+      events are generated.
+    exportHash: afa13c4455a0f59f61a559d4f9dba21441b676c7c97ee645ee4ade2e3915908f
+    id: ~exportplaceholderid-dataTable-geofences~
+    name: geofences
+version: 1

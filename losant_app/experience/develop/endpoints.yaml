@@ -1,0 +1,120 @@
+resourceType: ExperienceEndpoint
+resources:
+  - access: authenticated
+    enabled: true
+    endpointTags: {}
+    experienceGroupIds: []
+    exportHash: 1af81b18e70e6e954e52db19866dd1a62a37b97d7e9e588e8b625194f4bc4797
+    id: ~exportplaceholderid-experienceEndpoint-deleteApiGeofencesGeofenceId~
+    method: delete
+    route: '/api/geofences/{geofenceId}'
+    version: develop
+  - access: authenticated
+    enabled: true
+    endpointTags: {}
+    experienceGroupIds: []
+    exportHash: 853f54249fda7ac2e977a11e78bb59f0624f4e62b5f6a17d23af1cdfaffdcb3d
+    id: ~exportplaceholderid-experienceEndpoint-getApiAlarms~
+    method: get
+    route: /api/alarms
+    version: develop
+  - access: authenticated
+    enabled: true
+    endpointTags: {}
+    experienceGroupIds: []
+    exportHash: 3bc37e41c4182392d8d7132a34240046c2a32257eb5a80e4b4229533949d30ba
+    id: ~exportplaceholderid-experienceEndpoint-getApiFleetDevicesDeviceIdHistory~
+    method: get
+    route: '/api/fleet/devices/{deviceId}/history'
+    version: develop
+  - access: authenticated
+    enabled: true
+    endpointTags: {}
+    experienceGroupIds: []
+    exportHash: d00f21d5e1950d022ba05929974b9ce6c0e2a8265eab6ade7fd9a6b4197d5a89
+    id: ~exportplaceholderid-experienceEndpoint-getApiFleet~
+    method: get
+    route: /api/fleet
+    version: develop
+  - access: authenticated
+    enabled: true
+    endpointTags: {}
+    experienceGroupIds: []
+    exportHash: 052dc235f5aaaf8dc0215a203243c0f3f74fbf1f3ce288254dc3930876a0df1f
+    id: ~exportplaceholderid-experienceEndpoint-getApiGeofences~
+    method: get
+    route: /api/geofences
+    version: develop
+  - access: public
+    description: >-
+      The public-facing route for the login page. Users who are already logged
+      in will get redirected to the home page (powered by the workflow).
+    enabled: true
+    endpointTags: {}
+    experienceGroupIds: []
+    exportHash: 8bb909aded99f18ba5681f96835a7c57ddae7ac862053f366f759f601fd3aae4
+    id: ~exportplaceholderid-experienceEndpoint-getLogin~
+    method: get
+    route: /login
+    version: develop
+  - access: public
+    description: >-
+      Requests to this endpoint will delete the user's auth cookie and redirect
+      to the /login endpoint.
+    enabled: true
+    endpointTags: {}
+    experienceGroupIds: []
+    exportHash: 31f0b093c374236816ec1b05394040d65622c83e9ec959b9e39c8b439b2ccf03
+    id: ~exportplaceholderid-experienceEndpoint-getLogout~
+    method: get
+    route: /logout
+    version: develop
+  - access: authenticated
+    description: >-
+      The experience root. If a user is not logged in, they will be redirected
+      to /login.
+    enabled: true
+    endpointTags: {}
+    experienceGroupIds: []
+    exportHash: 5d21c9e9c8c5bf687c6ceb6bee4ba566acdf59ff62985d06bc174f7b8b1f068e
+    id: ~exportplaceholderid-experienceEndpoint-get~
+    method: get
+    route: /
+    unauthorizedReply:
+      statusCode: 302
+      type: redirect
+      value: /login
+    version: develop
+  - access: authenticated
+    enabled: true
+    endpointTags: {}
+    experienceGroupIds: []
+    exportHash: eeb558101310668fc683f9f1d8e65dd4b37fed38a5253059e615281fd97b6e72
+    id: ~exportplaceholderid-experienceEndpoint-patchApiGeofencesGeofenceId~
+    method: patch
+    route: '/api/geofences/{geofenceId}'
+    version: develop
+  - access: authenticated
+    enabled: true
+    endpointTags: {}
+    experienceGroupIds: []
+    exportHash: cefbe0cf7f63c4614cf176233ba2df77440a1d41ef3d3bd94983b8cb44ea229f
+    id: ~exportplaceholderid-experienceEndpoint-postApiGeofences~
+    method: post
+    route: /api/geofences
+    version: develop
+  - access: public
+    description: >-
+      When a user submits login credentials, those credentials hit this route.
+      Then they are authenticated in the workflow backing this endpoint; if
+      valid, the user is redirected to the home page. If not, the user is
+      redirected back to the login page with a message about what went wrong.
+    enabled: true
+    endpointTags: {}
+    experienceGroupIds: []
+    exportHash: 894e8636f4ac1c85a8f752905c29f58688c1b2ecff990da6fa0a268d3eb0f073
+    id: ~exportplaceholderid-experienceEndpoint-postLogin~
+    method: post
+    route: /login
+    version: develop
+version: 1

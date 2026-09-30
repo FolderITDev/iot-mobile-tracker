@@ -1,0 +1,10 @@
+resourceType: ExperienceView
+resources:
+  - exportHash: 217ef9cb0846c1b6c839502bb024fc1d02da584041da46022094dcbc48b41769
+    id: ~exportplaceholderid-experienceView-trackerLayout~
+    localFilename: ./Tracker_Layout.hbs
+    name: Tracker Layout
+    version: develop
+    viewTags: {}
+    viewType: layout
+version: 1
