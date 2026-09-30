@@ -92,7 +92,6 @@ IoT Mobile Tracker is a multi-tenant fleet tracking application built on the [Lo
 | Path | Contents |
 |------|----------|
 | `losant_app/` | Losant application export: workflows, Data Tables, device recipe and experience (layout, pages, endpoints and workflows). |
-| `design/` | Source design assets. |
 | `tools/` | `simulate-route.js`, a script that simulates a vehicle driving a route. |
 | `.env.example` | Template for the credentials used by the route simulator. |
 
