@@ -1,0 +1,29 @@
+resourceType: ExperienceView
+resources:
+  - exportHash: 0e76d35dec9a3bd1be4ce01594b51759b129a76c131d19894af1579bb0966ae6
+    headers:
+      content-type: text/html
+    id: ~exportplaceholderid-experienceView-fleetMap~
+    layoutId: ~exportplaceholderid-experienceView-trackerLayout~
+    localFilename: ./Fleet_Map.hbs
+    name: Fleet Map
+    version: develop
+    viewTags: {}
+    viewType: page
+  - description: >-
+      Users who are not logged in will be redirected to this page when they try
+      to visit the home page. This is a simple login form; when the user submits
+      the form, it will hit the POST /login endpoint with the email and password
+      submitted by the user. If the credentials are valid, the user will get an
+      authentication cookie and will be redirected to the Home page.
+    exportHash: 3641a1b010c61bbf1800042d625b677ce9a9fe310f95f7f755ceadce3e9e7627
+    headers:
+      content-type: text/html
+    id: ~exportplaceholderid-experienceView-logIn~
+    layoutId: ~exportplaceholderid-experienceView-trackerLayout~
+    localFilename: ./Log_In.hbs
+    name: Log In
+    version: develop
+    viewTags: {}
+    viewType: page
+version: 1

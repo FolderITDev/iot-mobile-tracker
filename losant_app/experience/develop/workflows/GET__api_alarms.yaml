@@ -1,0 +1,152 @@
+resourceType: ExperienceFlowVersion
+resources:
+  - description: Created for Endpoint GET /api/alarms
+    enabled: true
+    exportHash: 4aa488e63b02527b944749316888dbea66ca0f214034120369bc8a0ad544087f
+    flowId: ~exportplaceholderid-flow-getApiAlarms~
+    globals: []
+    id: ~exportplaceholderid-flowVersion-getApiAlarms~
+    name: GET /api/alarms
+    nodes:
+      - config:
+          bodyTemplate: '{ "items": {{jsonEncode working.rows.items}} }'
+          bodyTemplateType: string
+          cookieInfo: []
+          headerInfo:
+            - keyTemplate: Content-Type
+              valueTemplate: application/json
+          mqttTopicsTemplate: []
+          replyIdPath: ''
+          replyType: custom
+          responseCodeTemplate: '200'
+          sameSiteTemplate: ''
+        id: x6kyqXjuzU
+        meta:
+          category: output
+          description: ''
+          label: 'Endpoint: Reply'
+          mqttTopicsType: []
+          name: endpoint-reply
+          x: 300
+          'y': 580
+        outputIds:
+          - - vVq_AeBI41
+        type: EndpointReplyNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: vVq_AeBI41
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 300
+          'y': 680
+        outputIds: []
+        type: DebugNode
+      - config:
+          rules:
+            - destination: working.orgId
+              type: set
+              valueTemplate: '{{experience.user.experienceGroups.[0].id}}'
+              valueTemplateType: string
+        id: GRUrXMNpm1
+        meta:
+          category: logic
+          description: ''
+          label: Mutate
+          name: mutate
+          x: 300
+          'y': 200
+        outputIds:
+          - - Cqg8TVOQoe
+        type: MutateNode
+      - config:
+          scopePath: ''
+          script: >
+            /*
+             * Function node "Build alarms query"
+             * Workflow: API Alarms, GET /api/alarms?limit=N&type=T&deviceId=D&before=MS
+             *   before: epoch ms (an ISO date is also accepted); eventTime is stored as epoch ms
+             *
+             * Input (payload):
+             *   data.query       endpoint query string
+             *   working.orgId    user's organizationId
+             *
+             * Output:
+             *   working.query    advanced query for Table: Get Rows on "alarm_events"
+             *   working.limit    1..500 (default 100)
+             *   -> Get Rows: query {{jsonEncode working.query}}, sort eventTime descending, limit {{working.limit}}
+             */
+
+            var q = (payload.data && payload.data.query) || {};
+
+            var working = payload.working = payload.working || {};
+
+            var and = [{ organizationId: { $eq: working.orgId } }];
+
+
+            if (q.type) and.push({ type: { $eq: String(q.type) } });
+
+            if (q.deviceId) and.push({ deviceId: { $eq: String(q.deviceId) } });
+
+            var before = /^\d+$/.test(String(q.before || '')) ? Number(q.before)
+            : new Date(q.before).getTime();
+
+            if (q.before && isFinite(before)) and.push({ eventTime: { $lt:
+            before } });
+
+
+            working.query = { $and: and };
+
+            working.limit = Math.max(1, Math.min(500, parseInt(q.limit, 10) ||
+            100));
+        id: Cqg8TVOQoe
+        meta:
+          category: logic
+          description: ''
+          label: Function
+          name: function
+          x: 300
+          'y': 300
+        outputIds:
+          - - 6_SqhTXqwu
+        type: RawFunctionNode
+      - config:
+          dataTableIdTemplate: ~exportplaceholderid-dataTable-alarmEvents~
+          includeFieldsTemplate: ''
+          limitTemplate: '{{working.limit}}'
+          offsetTemplate: ''
+          queryTemplate: '{{jsonEncode working.query}}'
+          resultPath: working.rows
+          sortColumnTemplate: eventTime
+          sortDirectionTemplate: desc
+        id: 6_SqhTXqwu
+        meta:
+          category: data
+          description: ''
+          label: 'Table: Get Rows'
+          name: get-table-rows
+          x: 300
+          'y': 400
+        outputIds:
+          - - x6kyqXjuzU
+        type: DataTableQueryNode
+    triggers:
+      - config: {}
+        key: ~exportplaceholderid-experienceEndpoint-getApiAlarms~
+        meta:
+          category: trigger
+          description: ''
+          label: GET /api/alarms
+          name: endpoint
+          uiId: vyBw78sQZt
+          x: 300
+          'y': 80
+        outputIds:
+          - - GRUrXMNpm1
+        type: endpoint
+    version: develop
+version: 1

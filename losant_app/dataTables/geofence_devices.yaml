@@ -1,0 +1,42 @@
+resourceType: DataTable
+resources:
+  - columns:
+      - constraint: required
+        dataType: string
+        name: organizationId
+      - constraint: required
+        dataType: string
+        name: geofenceId
+      - constraint: required
+        dataType: string
+        name: deviceId
+      - constraint: required
+        dataType: string
+        name: state
+      - constraint: optional
+        dataType: number
+        name: stateChangedAt
+    description: >-
+      Many-to-many assignment between geofences and devices, plus each device's
+      current state for that geofence (one row per geofence/device pair). 
+
+      Columns: 
+
+      organizationId (String, required) - tenant, Experience Group ID. 
+
+      geofenceId (String, required) - row id in the geofences table. 
+
+      deviceId (String, required) - Losant device ID. 
+
+      state (String, required, default "unknown") - "unknown", "inside" or
+      "outside"; "unknown" means not yet evaluated, and the first evaluation
+      sets it without logging an event. 
+
+      stateChangedAt (Number, optional) - epoch milliseconds of the device
+      message that produced the current state; used to ignore out-of-order
+      messages.
+    exportHash: cc250a688275902580b2e905145f90a7d2eebaf10f2248276a01eec607c60f0e
+    id: ~exportplaceholderid-dataTable-geofenceDevices~
+    name: geofence_devices
+sequenceNumber: 1
+version: 1

@@ -1,0 +1,64 @@
+resourceType: ExperienceFlowVersion
+resources:
+  - description: >-
+      A workflow managing the logout route. Users who hit the endpoint get their
+      auth cookie deleted and are redirected to the login route, ending their
+      session.
+    enabled: true
+    exportHash: 1cdc19aa16cee8376b4a32400db3f5b20934784090a3fe000b24377cd2557513
+    flowId: ~exportplaceholderid-flow-endpointLogout~
+    globals: []
+    id: ~exportplaceholderid-flowVersion-endpointLogout~
+    name: Endpoint /logout
+    nodes:
+      - config:
+          bodyTemplate: /login
+          bodyTemplateType: string
+          cookieInfo:
+            - nameTemplate: authorization
+          headerInfo: []
+          replyIdPath: ''
+          replyType: redirect
+          responseCodeTemplate: '302'
+        id: Bkx0DpwaW
+        meta:
+          category: output
+          description: Delete the auth cookie and redirect the user to the login page.
+          label: Go to /login
+          name: endpoint-reply
+          x: 260
+          'y': 200
+        outputIds:
+          - - S1eeAPTDpZ
+        type: EndpointReplyNode
+      - config:
+          message: ''
+          property: ''
+        id: S1eeAPTDpZ
+        meta:
+          category: output
+          description: Log requests to this endpoint.
+          label: Debug
+          name: debug
+          x: 260
+          'y': 300
+        outputIds: []
+        type: DebugNode
+    triggers:
+      - config: {}
+        key: ~exportplaceholderid-experienceEndpoint-getLogout~
+        meta:
+          category: trigger
+          description: >-
+            On a request to the logout route (user clicks "Log Out" example
+            dropdown) ...
+          label: GET /logout
+          name: endpoint
+          uiId: BkZxCwawTW
+          x: 260
+          'y': 100
+        outputIds:
+          - - Bkx0DpwaW
+        type: endpoint
+    version: develop
+version: 1

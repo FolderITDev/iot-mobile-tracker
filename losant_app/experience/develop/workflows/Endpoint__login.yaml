@@ -1,0 +1,194 @@
+resourceType: ExperienceFlowVersion
+resources:
+  - description: >-
+      A workflow managing the login page - both requests to view the page as
+      well as submissions of login credentials.
+    enabled: true
+    exportHash: 5e3ccf79b195476e7ab1eb39483608cdd28f5097fb3037a9feb0b0139f498446
+    flowId: ~exportplaceholderid-flow-endpointLogin~
+    globals: []
+    id: ~exportplaceholderid-flowVersion-endpointLogin~
+    name: Endpoint /login
+    nodes:
+      - config:
+          emailTemplate: '{{data.body.email}}'
+          passwordTemplate: '{{data.body.password}}'
+          tokenResultPath: data.responseToken
+          ttlTemplate: ''
+          userResultPath: data.responseUser
+        id: r1BuEcPab
+        meta:
+          category: experience
+          description: Do these credentials match an experience user?
+          label: Authenticate
+          name: experience-user-auth
+          x: 360
+          'y': 480
+        outputIds:
+          - - BkxSdV9P6-
+          - - r1-HdN5Dab
+        type: ExperienceUserAuthNode
+      - config:
+          bodyTemplate: |-
+            {
+              "loginFailure": true,
+              "email": {{jsonEncode data.body.email}}
+            }
+          bodyTemplateType: json
+          cookieInfo: []
+          headerInfo: []
+          layoutIdTemplate: ''
+          pageIdTemplate: ~exportplaceholderid-experienceView-logIn~
+          replyIdPath: ''
+          replyType: page
+          responseCodeTemplate: '401'
+        id: BkxSdV9P6-
+        meta:
+          category: output
+          description: >-
+            Invalid credentials. Return the user to the login page and alert
+            them of the error.
+          label: Login Failure
+          name: endpoint-reply
+          x: 260
+          'y': 580
+        outputIds:
+          - - SkfSONqvaW
+        type: EndpointReplyNode
+      - config:
+          bodyTemplate: /
+          bodyTemplateType: string
+          cookieInfo:
+            - maxAgeTemplate: ''
+              nameTemplate: authorization
+              valueTemplate: '{{data.responseToken}}'
+          headerInfo: []
+          replyIdPath: ''
+          replyType: redirect
+          responseCodeTemplate: '302'
+        id: r1-HdN5Dab
+        meta:
+          category: output
+          description: >-
+            Successful login. Redirect the user to the home page and set the
+            auth cookie for future requests.
+          label: Set cookie & redirect to home
+          name: endpoint-reply
+          x: 460
+          'y': 580
+        outputIds:
+          - - SkfSONqvaW
+        type: EndpointReplyNode
+      - config:
+          message: ''
+          property: ''
+        id: SkfSONqvaW
+        meta:
+          category: output
+          description: Log the requests hitting these endpoints.
+          label: Debug
+          name: debug
+          x: 360
+          'y': 680
+        outputIds: []
+        type: DebugNode
+      - config:
+          expression: '{{ experience.user }}'
+        id: B1XrON5DTW
+        meta:
+          category: logic
+          description: Is the user logged in already?
+          label: Logged in?
+          name: conditional
+          x: 360
+          'y': 280
+        outputIds:
+          - - r1NSOEcw6Z
+          - - ryHSdE5vTZ
+        type: ConditionalNode
+      - config:
+          bodyTemplate: /
+          bodyTemplateType: string
+          cookieInfo: []
+          headerInfo: []
+          replyIdPath: ''
+          replyType: redirect
+          responseCodeTemplate: '302'
+        id: ryHSdE5vTZ
+        meta:
+          category: output
+          description: User is already logged in. Redirect them to the home page.
+          label: Go to /
+          name: endpoint-reply
+          x: 660
+          'y': 580
+        outputIds:
+          - - SkfSONqvaW
+        type: EndpointReplyNode
+      - config:
+          expression: '{{ data.method }} == ''post'''
+        id: r1NSOEcw6Z
+        meta:
+          category: logic
+          description: Was this a submission of login credentials?
+          label: POST request?
+          name: conditional
+          x: 260
+          'y': 380
+        outputIds:
+          - - SyUrOE9wpW
+          - - r1BuEcPab
+        type: ConditionalNode
+      - config:
+          bodyTemplate: |-
+            {
+              "loginFailure": false
+            }
+          bodyTemplateType: json
+          cookieInfo: []
+          headerInfo: []
+          layoutIdTemplate: ''
+          pageIdTemplate: ~exportplaceholderid-experienceView-logIn~
+          replyIdPath: ''
+          replyType: page
+          responseCodeTemplate: '200'
+        id: SyUrOE9wpW
+        meta:
+          category: output
+          description: Render the login page for the user.
+          label: Render Login
+          name: endpoint-reply
+          x: 60
+          'y': 580
+        outputIds:
+          - - SkfSONqvaW
+        type: EndpointReplyNode
+    triggers:
+      - config: {}
+        key: ~exportplaceholderid-experienceEndpoint-postLogin~
+        meta:
+          category: trigger
+          description: When a user submits login credentials ...
+          label: POST /login
+          name: endpoint
+          uiId: SywHdN5P6W
+          x: 260
+          'y': 180
+        outputIds:
+          - - B1XrON5DTW
+        type: endpoint
+      - config: {}
+        key: ~exportplaceholderid-experienceEndpoint-getLogin~
+        meta:
+          category: trigger
+          description: When a user visits the login page ...
+          label: GET /login
+          name: endpoint
+          uiId: SJ_SOV5D6W
+          x: 460
+          'y': 180
+        outputIds:
+          - - B1XrON5DTW
+        type: endpoint
+    version: develop
+version: 1

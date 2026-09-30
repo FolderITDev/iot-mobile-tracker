@@ -1,0 +1,87 @@
+resourceType: ExperienceFlowVersion
+resources:
+  - description: 'página Fleet Map (usuario autenticado; si no lo está, redirigir a /login)'
+    enabled: true
+    exportHash: fb01dc50f63f11a407fc6171da3d570581476ab9be11c463b556237f08a455ae
+    flowId: ~exportplaceholderid-flow-get~
+    globals: []
+    id: ~exportplaceholderid-flowVersion-get~
+    name: GET /
+    nodes:
+      - config:
+          bodyTemplate: "{\r\n  \"googleMapsApiKey\": \"{{globals.GOOGLE_MAPS_API_KEY}}\",\r\n  \"organization\": { \"name\": \"{{experience.user.experienceGroups.[0].name}}\" }\r\n}"
+          bodyTemplateType: json
+          cookieInfo: []
+          headerInfo: []
+          layoutIdTemplate: ''
+          mqttTopicsTemplate: []
+          pageIdTemplate: ~exportplaceholderid-experienceView-fleetMap~
+          replyIdPath: ''
+          replyType: page
+          responseCodeTemplate: '200'
+          sameSiteTemplate: ''
+        id: yDM6889DDe
+        meta:
+          category: output
+          description: ''
+          label: 'Endpoint: Reply'
+          mqttTopicsType: []
+          name: endpoint-reply
+          x: 100
+          'y': 160
+        outputIds:
+          - - ZrDSPiKoRz
+        type: EndpointReplyNode
+      - config:
+          bodyTemplate: "{\r\n  \"googleMapsApiKey\": \"{{globals.GOOGLE_MAPS_API_KEY}}\",\r\n  \"googleMapsMapId\": \"{{globals.GOOGLE_MAPS_MAP_ID}}\",\r\n  \"organization\": { \"name\": \"{{experience.user.experienceGroups.[0].name}}\" }\r\n}"
+          bodyTemplateType: json
+          cookieInfo: []
+          headerInfo: []
+          layoutIdTemplate: ''
+          mqttTopicsTemplate: []
+          pageIdTemplate: ~exportplaceholderid-experienceView-fleetMap~
+          replyIdPath: ''
+          replyType: page
+          responseCodeTemplate: '200'
+          sameSiteTemplate: ''
+        id: LTO2G6AZpn
+        meta:
+          category: output
+          description: ''
+          label: 'Endpoint: Reply'
+          mqttTopicsType: []
+          name: endpoint-reply
+          x: 300
+          'y': 160
+        outputIds: []
+        type: EndpointReplyNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: ZrDSPiKoRz
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 100
+          'y': 260
+        outputIds: []
+        type: DebugNode
+    triggers:
+      - config: {}
+        key: ~exportplaceholderid-experienceEndpoint-get~
+        meta:
+          category: trigger
+          description: ''
+          label: Endpoint
+          name: endpoint
+          uiId: _Qc9dHNh54
+          x: 100
+          'y': 60
+        outputIds:
+          - - yDM6889DDe
+        type: endpoint
+    version: develop
+version: 1

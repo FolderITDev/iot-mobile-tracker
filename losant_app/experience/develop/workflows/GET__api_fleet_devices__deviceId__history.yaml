@@ -1,0 +1,138 @@
+resourceType: ExperienceFlowVersion
+resources:
+  - description: 'Created for Endpoint GET /api/fleet/devices/{deviceId}/history'
+    enabled: true
+    exportHash: 56bb56c949c098393bf6aa0c34789ea06155505c3370e2124d85a3ed318b8a0a
+    flowId: ~exportplaceholderid-flow-getApiFleetDevicesDeviceIdHistory~
+    globals: []
+    id: ~exportplaceholderid-flowVersion-getApiFleetDevicesDeviceIdHistory~
+    name: 'GET /api/fleet/devices/{deviceId}/history'
+    nodes:
+      - config:
+          bodyTemplate: '{{jsonEncode working.history}}'
+          bodyTemplateType: string
+          cookieInfo: []
+          headerInfo:
+            - keyTemplate: Content-Type
+              valueTemplate: application/json
+          mqttTopicsTemplate: []
+          replyIdPath: ''
+          replyType: custom
+          responseCodeTemplate: '200'
+          sameSiteTemplate: ''
+        id: IqzSd93xAk
+        meta:
+          category: output
+          description: ''
+          label: 'Endpoint: Reply'
+          mqttTopicsType: []
+          name: endpoint-reply
+          x: 320
+          'y': 460
+        outputIds:
+          - - YwApyn3beR
+        type: EndpointReplyNode
+      - config:
+          level: verbose
+          message: ''
+          property: ''
+        id: YwApyn3beR
+        meta:
+          category: debug
+          description: ''
+          label: Debug
+          name: debug
+          x: 320
+          'y': 560
+        outputIds: []
+        type: DebugNode
+      - config:
+          attributesAsObject: false
+          findMetadata: false
+          findMethod: query
+          findMultiple: false
+          includeConnectionStatus: true
+          includeState: false
+          queryTemplate: |-
+            {
+              "$and": [
+                {
+                  "experienceUserId": {
+                    "$eq": "{{experience.user.id}}"
+                  }
+                },
+                {
+                  "id": {
+                    "$eq": "{{data.params.deviceId}}"
+                  }
+                }
+              ]
+            }
+          resultPath: working.device
+          sortDirection: asc
+          sortField: name
+          tagsAsObject: false
+        id: oDBV8U3z3M
+        meta:
+          category: data
+          description: ''
+          label: 'Device: Get'
+          name: get-device
+          x: 320
+          'y': 160
+        outputIds:
+          - - Hb2EzkjuOv
+        type: GetDeviceNode
+      - config:
+          action: timeSeriesQuery
+          params:
+            - name: query
+              type: json
+              value: "{\r\n  \"aggregation\": \"NONE\",\r\n  \"attributes\": [\r\n    \"location\",\r\n    \"speed\"\r\n  ],\r\n  \"deviceIds\": [\r\n    \"{{data.params.deviceId}}\"\r\n  ],\r\n  \"start\": {{working.start}}\r\n}"
+          resource: data
+          responsePath: working.history
+        id: b3JCbo1tC9
+        meta:
+          category: data
+          description: ''
+          label: Losant API
+          name: losantapi
+          x: 320
+          'y': 320
+        outputIds:
+          - - IqzSd93xAk
+        type: LosantApiNode
+      - config:
+          statements:
+            - expression: ' {{defaultTo data.query.minutes 60}}'
+              resultPath: working.minutes
+            - expression: '-{{working.minutes}} * 60000'
+              resultPath: working.start
+        id: Hb2EzkjuOv
+        meta:
+          category: logic
+          description: ''
+          label: Math
+          name: math
+          x: 320
+          'y': 240
+        outputIds:
+          - - b3JCbo1tC9
+        type: MathNode
+    triggers:
+      - config: {}
+        key: >-
+          ~exportplaceholderid-experienceEndpoint-getApiFleetDevicesDeviceIdHistory~
+        meta:
+          category: trigger
+          description: ''
+          label: 'GET /api/fleet/devices/{deviceId}/history'
+          name: endpoint
+          uiId: TDgLwi54IJ
+          x: 320
+          'y': 60
+        outputIds:
+          - - oDBV8U3z3M
+        type: endpoint
+    version: develop
+version: 1
