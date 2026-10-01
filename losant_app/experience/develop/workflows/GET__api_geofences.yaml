@@ -2,7 +2,7 @@ resourceType: ExperienceFlowVersion
 resources:
   - description: Created for Endpoint GET /api/geofences
     enabled: true
-    exportHash: e356c4ec25632fbf42182fceca0fc92f1ca76b7b57804a15e2c28f4deb527a62
+    exportHash: 7d9ae2cf65aed7e49fa4377b586845fd54199e64a9308e07053bf9d7307a8be3
     flowId: ~exportplaceholderid-flow-getApiGeofences~
     globals: []
     id: ~exportplaceholderid-flowVersion-getApiGeofences~
@@ -563,6 +563,11 @@ resources:
                 {
                   "id": {
                     "$eq": "{{data.params.geofenceId}}"
+                  }
+                },
+                {
+                  "organizationId": {
+                    "$eq": "{{working.orgId}}"
                   }
                 }
               ]
